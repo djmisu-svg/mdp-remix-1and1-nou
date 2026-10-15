@@ -63,7 +63,9 @@ The raw Gradle result is `app/build/outputs/apk/debug/app-debug.apk`; CI verifie
 
 ## Verification status
 
-This workspace has no usable Gradle distribution, Kotlin compiler or Android SDK. Local SDK installation/build retries and GitHub writes remain stopped at the user's request following the earlier network failures and integration 403. Source review and structural checks can run locally; Gradle unit tests, Android lint, compilation, APK generation and installation have not been confirmed here. A workflow file is included, but no APK artifact is claimed until a real GitHub Actions run succeeds.
+The project is published on **feat/mdp-remix-youtube-player** in [Pull Request #1](https://github.com/djmisu-svg/mdp-remix-1and1-nou/pull/1). GitHub authorization is restored; no manual source upload is necessary. Follow the [branch Actions runs](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions?query=branch%3Afeat%2Fmdp-remix-youtube-player) for the actual build result and APK artifact.
+
+The first real CI run passed Python checks, JDK/SDK setup and wrapper validation, then identified two Compose receiver-scope compilation errors. The layout now captures its dimensions before entering nested Compose scopes. Subsequent runs validate the fix, app JVM tests, Android lint and APK signing. No local SDK installation/build retry was used. Installation and real playback on a Samsung device remain unverified.
 
 See [testing](docs/TESTING.md), [delivery checks](docs/VERIFICARE_LIVRARE.md) and [upload instructions](PENTRU_GITHUB_ACTIONS.md).
 

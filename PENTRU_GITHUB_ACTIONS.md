@@ -1,14 +1,14 @@
-# Încărcarea proiectului și descărcarea APK-ului
+# Descărcarea APK-ului
 
-Arhiva nouă este **MdP-RemiX-project.zip**, iar folderul ei principal este **mdp-remix**. Codul este pregătit complet; nu trebuie editat manual și nu necesită cheie API.
+Conectarea GitHub a fost rezolvată. Proiectul complet este publicat pe branch-ul **feat/mdp-remix-youtube-player**, în [Pull Request #1](https://github.com/djmisu-svg/mdp-remix-1and1-nou/pull/1). Nu mai trebuie să încarci sau să editezi codul manual.
 
-1. Dezarhivează și încarcă **conținutul** folderului mdp-remix în rădăcina repository-ului djmisu-svg/mdp-remix-1and1-nou, inclusiv folderul ascuns **.github**. Acceptă înlocuirea fișierelor cu aceleași nume, păstrând directoarele. Nu încărca doar ZIP-ul.
-2. **build.gradle** și **settings.gradle** de la rădăcină înlocuiesc configurația veche defectă. Copiile .kts sunt păstrate. Modulul app folosește app/build.gradle.kts.
-3. În GitHub → **Actions**, deschide rularea **Android Debug APK** pentru commit-ul încărcat și așteaptă rezultatul verde.
-4. În **Artifacts**, descarcă **MdP-RemiX-debug** din contul tău GitHub. Dezarhivează și instalează **MdP-RemiX.apk** pe tabletă. Android minim: 6.0/API 23.
+1. Deschide [rulările Actions ale branch-ului](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions?query=branch%3Afeat%2Fmdp-remix-youtube-player).
+2. Alege o rulare **Android Debug APK** care a trecut complet, cu rezultat verde.
+3. În **Artifacts**, descarcă **MdP-RemiX-debug** din contul tău GitHub.
+4. Dezarhivează și instalează **MdP-RemiX.apk** pe tabletă. Android minim: 6.0/API 23.
 
-Workflow-ul folosește JDK 17, platform-tools, platforms;android-35 și build-tools;35.0.0; nu cere vechiul pachet SDK tools. Include teste JVM, lint, build, verificarea semnăturii APK-ului și checksum SHA-256. Artifactele expiră după 30 de zile.
+Workflow-ul folosește JDK 17, Gradle 8.9, platform-tools, platforms;android-35 și build-tools;35.0.0; nu cere vechiul pachet SDK tools. Include 60 de teste JVM, lint, build, verificarea semnăturii APK-ului și checksum SHA-256. Artifactele expiră după 30 de zile.
 
-Proiectul și ZIP-ul anterior au rămas separat în workspace. Compilarea Android, testele JVM și instalarea pe dispozitiv nu sunt confirmate aici. Nu a fost încărcat un APK și nu a fost reluată integrarea GitHub care a refuzat scrierea cu 403.
+Proiectul și ZIP-ul anterior au rămas separat în workspace. Build-ul este verificat efectiv în Actions; instalarea și redarea pe dispozitiv Samsung trebuie verificate după descărcare. Branch-ul este separat de main și poate fi revizuit în Pull Request.
 
-Instrucțiuni complete: [START_HERE.md](START_HERE.md). Verificări și limite: [docs/VERIFICARE_LIVRARE.md](docs/VERIFICARE_LIVRARE.md).
+Pentru a publica sursele în alt repository, instrucțiunile alternative sunt în [START_HERE.md](START_HERE.md).

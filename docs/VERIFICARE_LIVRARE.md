@@ -18,12 +18,12 @@ Commands executed:
     PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools -p 'test_*.py' -v
     python3 tools/verify_project.py
 
-## Included but not executed here
+## GitHub publication and real CI
 
-There are **60 JVM app tests**: 23 for local audio library rules/JSON and 37 for YouTube URL parsing, link/playlist operations, favorite/history metadata and JSON persistence. They are configured for JUnit 4.13.2 with real org.json. GitHub Actions runs testDebugUnitTest, lintDebug and assembleDebug.
+GitHub authorization was restored on 2026-10-15. The complete project is on branch feat/mdp-remix-youtube-player in Pull Request #1: https://github.com/djmisu-svg/mdp-remix-1and1-nou/pull/1 . All 46 published source/configuration files were compared with their local Git blob hashes; they matched. The original root demo files remain preserved.
 
-No usable Gradle distribution, Kotlin compiler or Android SDK is installed in this workspace. In accordance with the user's earlier stop instruction, no SDK installation or blocked local build/download was retried. Android dependency resolution, Kotlin compilation, app JVM tests, Android lint, APK generation/signature verification, installation and real playback are therefore **unverified** for this version.
+The first real CI run passed the Python tests, structure verification, JDK 17, SDK 35 installation and Gradle wrapper validation. It then found two Compose scope errors in RemixApp.kt; dimensions are now captured in local values before nested Column/Row scopes. The SDK tools error did not recur. Following Actions runs validate the corrected code.
 
-No GitHub mutation was retried after the integration's prior 403 response. No Actions run or APK artifact has been created by this delivery. The repository remains unchanged until the completed project is uploaded by an authorized GitHub session. After a successful run, the artifact **MdP-RemiX-debug** contains **MdP-RemiX.apk** and SHA256SUMS.txt.
+The project includes **60 JVM app tests**: 23 for local audio library rules/JSON and 37 for YouTube URL parsing, link/playlist operations, favorite/history metadata and JSON persistence. GitHub Actions runs testDebugUnitTest, lintDebug and assembleDebug, followed by APK signature/package verification. Check the actual green branch run for the completed result and artifact; this document does not substitute for the run status.
 
-A successful build does not substitute for the physical device checks in TESTING.md. YouTube account playlist editing/sync is outside this app: it manages local saved references and opens playback officially.
+No local SDK installation or local Android build was resumed. Installation, physical playback, lock-screen behavior and YouTube handoff on a Samsung device remain unverified. A successful build does not substitute for the device checks in TESTING.md.

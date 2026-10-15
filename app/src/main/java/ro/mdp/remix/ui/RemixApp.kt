@@ -173,11 +173,13 @@ fun RemixApp(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { insets ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(insets)) {
-            val wide = maxWidth >= 840.dp || (maxWidth >= 520.dp && maxWidth > maxHeight)
-            val playerWidth = if (maxWidth < 720.dp) 240.dp else 320.dp
-            val compactHeight = maxHeight < 740.dp
-            Column(Modifier.fillMaxSize().padding(horizontal = if (maxWidth >= 840.dp) 28.dp else 16.dp)) {
-                BrandHeader(maxWidth >= 720.dp, importing, onImport)
+            val viewportWidth = maxWidth
+            val viewportHeight = maxHeight
+            val wide = viewportWidth >= 840.dp || (viewportWidth >= 520.dp && viewportWidth > viewportHeight)
+            val playerWidth = if (viewportWidth < 720.dp) 240.dp else 320.dp
+            val compactHeight = viewportHeight < 740.dp
+            Column(Modifier.fillMaxSize().padding(horizontal = if (viewportWidth >= 840.dp) 28.dp else 16.dp)) {
+                BrandHeader(viewportWidth >= 720.dp, importing, onImport)
                 if (importing) {
                     LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom = 10.dp), color = Gold)
                 }
@@ -243,7 +245,7 @@ fun RemixApp(
                         if (!wide) {
                             PlayerPanel(
                                 Modifier.fillMaxWidth().padding(vertical = 10.dp)
-                                    .heightIn(max = (maxHeight * 0.38f).coerceAtLeast(100.dp)),
+                                    .heightIn(max = (viewportHeight * 0.38f).coerceAtLeast(100.dp)),
                                 playback, library.favorites, false, compactHeight,
                                 onTogglePlayback, onNext, onPrevious, onSeek, onVolume, onFavorite,
                             )
