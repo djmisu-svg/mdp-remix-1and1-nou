@@ -1,0 +1,83 @@
+name: Android Debug APK
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test, lint and build installable APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Test offline project verifier
+        run: python3 -B -m unittest discover -s tools -p 'test_*.py' -v
+
+      - name: Verify project structure and pinned build configuration
+        run: python3 tools/verify_project.py
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up current Android SDK packages
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests, Android lint and Debug build
+        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug
+
+      - name: Verify signed APK and package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/MdP-RemiX.apk
+          test -s dist/MdP-RemiX.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/MdP-RemiX.apk
+          badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/MdP-RemiX.apk)
+          printf '%s\n' "$badging"
+          grep -q "^package: name='ro.mdp.remix'" <<< "$badging"
+          cd dist
+          sha256sum MdP-RemiX.apk > SHA256SUMS.txt
+
+      - name: Upload installable Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MdP-RemiX-debug
+          path: |
+            dist/MdP-RemiX.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-verification-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 14
