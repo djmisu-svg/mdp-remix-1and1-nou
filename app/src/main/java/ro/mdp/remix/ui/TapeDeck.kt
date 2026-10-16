@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -49,13 +48,13 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,9 +89,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.isActive
 import ro.mdp.remix.playback.AudioMeters
 import ro.mdp.remix.playback.PlaybackState
+import ro.mdp.remix.playback.ReelMotion
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -127,14 +131,32 @@ fun PremiumTapeDeck(
         if (playback.isPlaying) changePower(true)
     }
     val meters by AudioMeters.levels.collectAsStateWithLifecycle()
-    val running = powered && playback.isPlaying
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val reelActivity by ReelMotion.activity.collectAsStateWithLifecycle()
+    var reelFrame by remember { mutableStateOf(ReelMotion.snapshot()) }
+    LaunchedEffect(lifecycleOwner, reelActivity.version) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // The service owns phase. Navigation, resizing and background playback
+            // never restart a reel, and system animator scale cannot stop the motor.
+            reelFrame = ReelMotion.snapshot()
+            if (reelFrame.isPlaying || reelActivity.isPlaying) {
+                while (isActive) {
+                    withFrameNanos { reelFrame = ReelMotion.snapshot() }
+                    if (!reelFrame.isPlaying) break
+                }
+            }
+        }
+    }
+    val running = reelFrame.isPlaying
     val progress = if (playback.durationMs > 0) {
         (playback.positionMs.toFloat() / playback.durationMs).coerceIn(0f, 1f)
     } else 0f
-    val leftRotation = reelRotation(running, 7_500, "supply reel")
-    val rightRotation = reelRotation(running, 6_800, "take-up reel")
-    val left by animateFloatAsState(if (running) meters.left else 0f, tween(100), label = "left VU needle")
-    val right by animateFloatAsState(if (running) meters.right else 0f, tween(100), label = "right VU needle")
+    val leftRotation = reelFrame.leftDegrees
+    val rightRotation = reelFrame.rightDegrees
+    // PCM attack/release and held sample peaks are measured by the audio thread.
+    // Do not smear transients or manufacture movement with a second UI envelope.
+    val left = if (running) meters.left else 0f
+    val right = if (running) meters.right else 0f
     val haptic = LocalHapticFeedback.current
     val controlEnabled = powered && playback.connected
     val shape = RoundedCornerShape(24.dp)
@@ -149,25 +171,32 @@ fun PremiumTapeDeck(
             Spacer(Modifier.weight(1f))
             Text("STEREO", color = DeckMuted, fontSize = 9.sp, letterSpacing = 1.6.sp)
         }
-        Box(Modifier.fillMaxWidth().aspectRatio(1.66f)) {
-            Canvas(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // Keep the full flange/head assembly clear of the fixed-height
+            // stereo instruments on narrow phones, while scaling on tablets.
+            val deckHeight = maxOf(maxWidth / 1.5f, maxWidth * .468f + 86.dp)
+            Canvas(Modifier.fillMaxWidth().height(deckHeight)) {
                 val unit = size.width / 1_000f
                 scale(unit, unit, pivot = Offset.Zero) {
                     drawFaceplate(leftRotation, rightRotation, progress, powered)
                 }
+            }
+            Row(Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
+                ReelSemantics(leftRotation, running, "reel_left", uiText("Rolă sursă", "Supply reel"), Modifier.weight(1f))
+                ReelSemantics(rightRotation, running, "reel_right", uiText("Rolă preluare", "Take-up reel"), Modifier.weight(1f))
             }
             Row(
                 Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 6.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                AnalogMeter(left, if (running) meters.peakLeft else 0f, "L", "vu_left", Modifier.weight(1f))
+                AnalogMeter(left, if (running) meters.livePeakLeft else 0f, if (running) meters.peakLeft else 0f, "L", "vu_left", Modifier.weight(1f))
                 PowerControl(powered, Modifier.padding(horizontal = 12.dp)) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     if (powered && playback.isPlaying) onTogglePlayback()
                     changePower(!powered)
                 }
-                AnalogMeter(right, if (running) meters.peakRight else 0f, "R", "vu_right", Modifier.weight(1f))
+                AnalogMeter(right, if (running) meters.livePeakRight else 0f, if (running) meters.peakRight else 0f, "R", "vu_right", Modifier.weight(1f))
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -240,19 +269,12 @@ fun PremiumTapeDeck(
     }
 }
 
-/** Infinite transitions respect Android animation scale and stay idle-safe in Compose tests. */
 @Composable
-private fun reelRotation(running: Boolean, durationMillis: Int, label: String): Float {
-    val stoppedAngle = remember { floatArrayOf(0f) }
-    if (!running) return stoppedAngle[0]
-    val origin = remember { stoppedAngle[0] }
-    val transition = rememberInfiniteTransition(label = label)
-    val angle by transition.animateFloat(
-        initialValue = origin, targetValue = origin + 360f,
-        animationSpec = infiniteRepeatable(tween(durationMillis, easing = LinearEasing)), label = label,
-    )
-    SideEffect { stoppedAngle[0] = angle % 360f }
-    return angle
+private fun ReelSemantics(angle: Float, running: Boolean, tag: String, description: String, modifier: Modifier = Modifier) {
+    Box(modifier.aspectRatio(1f).testTag(tag).semantics {
+        contentDescription = description
+        stateDescription = "angle=${(angle % 360f + 360f) % 360f};running=$running"
+    })
 }
 
 @Composable
@@ -339,54 +361,97 @@ private fun PowerControl(powered: Boolean, modifier: Modifier = Modifier, onClic
 }
 
 @Composable
-private fun AnalogMeter(level: Float, peak: Float, channel: String, tag: String, modifier: Modifier = Modifier) {
+private fun AnalogMeter(level: Float, livePeak: Float, peak: Float, channel: String, tag: String, modifier: Modifier = Modifier) {
     val description = uiText("Nivel audio canal $channel", "Audio level channel $channel")
-    Canvas(modifier.height(60.dp).testTag(tag).semantics {
-        contentDescription = description
-        progressBarRangeInfo = ProgressBarRangeInfo(level.coerceIn(0f, 1f), 0f..1f)
-    }) {
-        val inset = 1.dp.toPx()
-        drawRoundRect(Color.White.copy(alpha = .11f), cornerRadius = CornerRadius(5.dp.toPx()))
-        drawRoundRect(DeckBlack, Offset(inset, inset), Size(size.width - inset * 2, size.height - inset * 2), CornerRadius(4.dp.toPx()))
-        val pivot = Offset(size.width * .5f, size.height * .87f)
-        val radius = minOf(size.height * .75f, size.width * .43f)
-        for (step in 0..20) {
-            val angle = -145f + step * 5.5f
-            val outer = radial(pivot, radius, angle)
-            val inner = radial(pivot, radius * if (step % 5 == 0) .81f else .9f, angle)
-            drawLine(if (step >= 16) DeckRed else DeckMuted.copy(alpha = .8f), inner, outer, if (step % 5 == 0) 1.5.dp.toPx() else .7.dp.toPx())
+    Column(modifier) {
+        Canvas(Modifier.fillMaxWidth().height(52.dp).testTag(tag).semantics {
+            contentDescription = description
+            progressBarRangeInfo = ProgressBarRangeInfo(level.coerceIn(0f, 1f), 0f..1f)
+            stateDescription = "peak=${peak.coerceIn(0f, 1f)}"
+        }) {
+            val inset = 1.dp.toPx()
+            drawRoundRect(Color.White.copy(alpha = .11f), cornerRadius = CornerRadius(5.dp.toPx()))
+            drawRoundRect(DeckBlack, Offset(inset, inset), Size(size.width - inset * 2, size.height - inset * 2), CornerRadius(4.dp.toPx()))
+            val pivot = Offset(size.width * .5f, size.height * .87f)
+            val radius = minOf(size.height * .75f, size.width * .43f)
+            for (step in 0..20) {
+                val angle = -145f + step * 5.5f
+                val outer = radial(pivot, radius, angle)
+                val inner = radial(pivot, radius * if (step % 5 == 0) .81f else .9f, angle)
+                drawLine(if (step >= 16) DeckRed else DeckMuted.copy(alpha = .8f), inner, outer, if (step % 5 == 0) 1.5.dp.toPx() else .7.dp.toPx())
+            }
+            val needleAngle = -145f + level.coerceIn(0f, 1f) * 110f
+            drawLine(DeckRed, pivot + Offset(1.dp.toPx(), 1.dp.toPx()), radial(pivot, radius * .85f, needleAngle) + Offset(1.dp.toPx(), 1.dp.toPx()), 2.dp.toPx(), StrokeCap.Round)
+            drawCircle(DeckMuted, 2.dp.toPx(), pivot)
+            drawCircle(DeckBlack, 1.dp.toPx(), pivot)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.LTGRAY; textSize = 7.sp.toPx(); typeface = Typeface.MONOSPACE }
+            drawContext.canvas.nativeCanvas.drawText("−60    −20    0", size.width * .12f, size.height * .25f, paint)
+            paint.textSize = 6.sp.toPx()
+            drawContext.canvas.nativeCanvas.drawText("VU $channel / dBFS", 7.dp.toPx(), size.height - 6.dp.toPx(), paint)
         }
-        val needleAngle = -145f + level.coerceIn(0f, 1f) * 110f
-        drawLine(DeckRed, pivot + Offset(1.dp.toPx(), 1.dp.toPx()), radial(pivot, radius * .85f, needleAngle) + Offset(1.dp.toPx(), 1.dp.toPx()), 2.dp.toPx(), StrokeCap.Round)
-        drawCircle(DeckMuted, 2.dp.toPx(), pivot)
-        drawCircle(DeckBlack, 1.dp.toPx(), pivot)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.LTGRAY; textSize = 7.sp.toPx(); typeface = Typeface.MONOSPACE }
-        drawContext.canvas.nativeCanvas.drawText("−60    −20    0", size.width * .12f, size.height * .25f, paint)
-        paint.textSize = 6.sp.toPx()
-        drawContext.canvas.nativeCanvas.drawText("VU $channel / dBFS", 7.dp.toPx(), size.height - 6.dp.toPx(), paint)
-        val segmentWidth = 3.dp.toPx()
-        for (segment in 0..6) {
-            drawRoundRect(
-                if (peak > (segment + 1) / 8f) DeckRed else Color.White.copy(alpha = .10f),
-                Offset(size.width - (8 - segment) * (segmentWidth + 1.dp.toPx()), size.height - 9.dp.toPx()),
-                Size(segmentWidth, 3.dp.toPx()), CornerRadius(.5.dp.toPx()),
-            )
+        SegmentedMeter(livePeak, peak, channel, Modifier.fillMaxWidth().padding(top = 3.dp))
+    }
+}
+
+/** These signal LEDs are the sole green/yellow accents on the black and red deck. */
+@Composable
+private fun SegmentedMeter(level: Float, peak: Float, channel: String, modifier: Modifier = Modifier) {
+    val description = uiText("Indicator LED audio $channel", "$channel audio LED meter")
+    val actualLevel = level.coerceIn(0f, 1f)
+    val actualPeak = peak.coerceIn(0f, 1f)
+    val tag = if (channel == "L") "led_left" else "led_right"
+    Canvas(modifier.height(19.dp).testTag(tag).semantics {
+        contentDescription = description
+        progressBarRangeInfo = ProgressBarRangeInfo(actualLevel, 0f..1f)
+        stateDescription = "peak=$actualPeak"
+    }) {
+        val count = 16
+        val inset = 4.dp.toPx()
+        val gap = 1.5.dp.toPx()
+        val width = ((size.width - inset * 2 - gap * (count - 1)) / count).coerceAtLeast(1f)
+        val height = 7.dp.toPx()
+        val top = (size.height - height) / 2
+        drawRoundRect(Color.White.copy(alpha = .10f), cornerRadius = CornerRadius(3.dp.toPx()))
+        drawRoundRect(DeckBlack, Offset(1f, 1f), Size(size.width - 2f, size.height - 2f), CornerRadius(3.dp.toPx()))
+        val peakSegment = if (actualPeak > 0f) ((actualPeak * count).toInt() - 1).coerceIn(0, count - 1) else -1
+        for (segment in 0 until count) {
+            val color = when {
+                segment < 12 -> Color(0xFF39D77D)
+                segment < 14 -> Color(0xFFFFCE3A)
+                else -> DeckRed
+            }
+            val lit = actualLevel >= (segment + 1).toFloat() / count
+            val heldPeak = segment == peakSegment
+            val origin = Offset(inset + segment * (width + gap), top)
+            if (lit || heldPeak) {
+                val glowCenter = origin + Offset(width / 2, height / 2)
+                drawCircle(Brush.radialGradient(listOf(color.copy(alpha = if (lit) .24f else .14f), Color.Transparent), glowCenter, height * .95f), height * .95f, glowCenter)
+            }
+            drawRoundRect(color.copy(alpha = if (lit) 1f else .10f), origin, Size(width, height), CornerRadius(.8.dp.toPx()))
+            if (lit) {
+                drawRoundRect(Color.White.copy(alpha = .22f), origin + Offset(.4.dp.toPx(), .7.dp.toPx()), Size((width - .8.dp.toPx()).coerceAtLeast(.5f), 1.dp.toPx()), CornerRadius(.3.dp.toPx()))
+            }
+            if (heldPeak) {
+                drawRoundRect(color, Offset(origin.x, top - 2.dp.toPx()), Size(width, 1.5.dp.toPx()), CornerRadius(.4.dp.toPx()))
+                drawLine(Color.White.copy(alpha = .65f), Offset(origin.x, top - 2.dp.toPx()), Offset(origin.x + width, top - 2.dp.toPx()), .5.dp.toPx())
+            }
         }
     }
 }
 
 private fun DrawScope.drawFaceplate(leftAngle: Float, rightAngle: Float, progress: Float, powered: Boolean) {
-    // The tape stays behind the flanges, then passes over the guides and head stack.
+    // A back-wound take-up routes over the outer right guide, so its opposite
+    // rotation feeds the same left-to-right tape path without a crossed ribbon.
     drawLine(Color.White.copy(alpha = .04f), Offset(12f, 468f), Offset(988f, 468f), 1f)
     val tape = Path().apply {
-        moveTo(247f, 344f); lineTo(354f, 424f); lineTo(409f, 443f)
-        lineTo(591f, 443f); lineTo(646f, 424f); lineTo(753f, 344f)
+        moveTo(414f, 310f); lineTo(354f, 424f); lineTo(409f, 443f)
+        lineTo(591f, 443f); lineTo(808f, 443f); lineTo(848f, 425f); lineTo(920f, 310f)
     }
     drawPath(tape, Color(0xFF353535), style = Stroke(9f))
     drawPath(tape, Color.White.copy(alpha = .24f), style = Stroke(1f))
     drawReel(Offset(247f, 215f), 202f, .84f - progress * .35f, leftAngle)
     drawReel(Offset(753f, 215f), 202f, .49f + progress * .35f, rightAngle)
-    for (x in listOf(354f, 646f)) {
+    for (x in listOf(354f, 828f)) {
         drawCircle(Color.Black, 28f, Offset(x, 424f))
         drawCircle(Brush.radialGradient(listOf(Color(0xFFABABAB), Color(0xFF2A2A2A)), Offset(x - 8, 416f), 32f), 23f, Offset(x, 422f))
         drawCircle(DeckBlack, 12f, Offset(x, 422f))

@@ -6,7 +6,10 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Decoded source PCM levels, before the player's volume and the device audio mixer.
- * RMS and sample peaks use the same scale: 0 = silence / <= -60 dBFS, 1 = 0 dBFS.
+ * Every channel uses the same scale: 0 = silence / <= -60 dBFS, 1 = 0 dBFS.
+ * RMS uses 10 ms measurements with a 30 ms attack / 300 ms release; peaks attack
+ * instantly, hold 600 ms, then release at 24 dB/s. Live peaks omit the hold for
+ * responsive LED segments. Timing comes only from real PCM.
  * Mono is mirrored to both channels; multichannel files use their first L/R pair.
  */
 data class MeterLevels(
@@ -14,10 +17,13 @@ data class MeterLevels(
     val right: Float = 0f,
     val peakLeft: Float = 0f,
     val peakRight: Float = 0f,
+    val livePeakLeft: Float = 0f,
+    val livePeakRight: Float = 0f,
 )
 
 /** A thread-safe bridge from Media3's audio thread to Compose; no microphone is used. */
 object AudioMeters {
+    // Wall time limits notifications only; it never creates or advances an audio envelope.
     private const val UPDATE_INTERVAL_NS = 40_000_000L // At most 25 PCM updates per second.
     private val lock = Any()
     private val mutableLevels = MutableStateFlow(MeterLevels())

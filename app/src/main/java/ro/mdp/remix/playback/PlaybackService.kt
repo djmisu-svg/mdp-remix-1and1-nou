@@ -23,6 +23,9 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         AudioMeters.reset()
+        // Freeze any prior service phase without resetting it. The mechanism belongs
+        // to playback, so opening a tab or recreating an Activity never restarts it.
+        ReelMotion.setPlaying(false)
         Log.d("MdP.AudioMeters", "Service created: pid=${Process.myPid()}; meter=${System.identityHashCode(AudioMeters)}")
 
         val player = ExoPlayer.Builder(this, MeterRenderersFactory(this))
@@ -39,6 +42,13 @@ class PlaybackService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             private var lastIsPlaying = false
 
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                // Timestamp the actual player transition, rather than a UI timer or
+                // playWhenReady (which can also be true during buffering/end).
+                ReelMotion.setPlaying(isPlaying)
+                AudioMeters.setPlaybackActive(isPlaying)
+            }
+
             override fun onEvents(player: Player, events: Player.Events) {
                 if (events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
                     events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)
@@ -47,6 +57,7 @@ class PlaybackService : MediaSessionService() {
                 }
                 // Includes pause, buffering, audio-focus loss, errors and end-of-queue.
                 AudioMeters.setPlaybackActive(player.isPlaying)
+                ReelMotion.setPlaying(player.isPlaying)
                 if (lastIsPlaying != player.isPlaying) {
                     lastIsPlaying = player.isPlaying
                     Log.d("MdP.AudioMeters", "Playback active=${player.isPlaying}; state=${player.playbackState}; ready=${player.playWhenReady}; suppression=${player.playbackSuppressionReason}")
@@ -54,6 +65,7 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                ReelMotion.setPlaying(false)
                 AudioMeters.setPlaybackActive(false)
                 Log.e("MdP.AudioMeters", "Playback failed: code=${error.errorCodeName}")
             }
@@ -91,6 +103,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        ReelMotion.setPlaying(false)
         AudioMeters.reset()
         mediaSession?.let { session ->
             session.player.release()

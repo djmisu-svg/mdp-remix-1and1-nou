@@ -38,6 +38,7 @@ internal class MeterAudioProcessor : BaseAudioProcessor() {
                 } else {
                     MeterPcmEncoding.PCM_16_BIT
                 },
+                inputAudioFormat.sampleRate,
             )
         } else null
         minimumFrames = (inputAudioFormat.sampleRate / 25).coerceAtLeast(1).toLong()
@@ -66,6 +67,8 @@ internal class MeterAudioProcessor : BaseAudioProcessor() {
             loggedPublication = false
         }
         if (token != null && analyzer != null) {
+            // Every PCM frame advances RMS/peak ballistics even when this UI snapshot
+            // is throttled. Decoder buffer sizes therefore cannot skip envelope steps.
             analyzer.append(inputBuffer)
             if (analyzer.frameCount >= minimumFrames && AudioMeters.publish(token, analyzer.levels())) {
                 if (!loggedPublication) {
