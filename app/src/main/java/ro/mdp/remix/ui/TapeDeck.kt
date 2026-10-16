@@ -149,7 +149,7 @@ fun PremiumTapeDeck(
             Spacer(Modifier.weight(1f))
             Text("STEREO", color = DeckMuted, fontSize = 9.sp, letterSpacing = 1.6.sp)
         }
-        BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(1.66f)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1.66f)) {
             Canvas(Modifier.fillMaxSize()) {
                 val unit = size.width / 1_000f
                 scale(unit, unit, pivot = Offset.Zero) {
