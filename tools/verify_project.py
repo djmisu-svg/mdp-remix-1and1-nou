@@ -64,6 +64,7 @@ def check_structure() -> None:
         "gradle/wrapper/gradle-wrapper.jar", "gradle/wrapper/gradle-wrapper.properties",
         "app/build.gradle.kts", "app/proguard-rules.pro", "app/src/main/AndroidManifest.xml",
         "app/src/main/res/values/strings.xml", "app/src/main/res/values/themes.xml",
+        "app/src/premiumTest/res/values/strings.xml",
         "app/src/main/res/drawable/ic_launcher.xml", ".github/workflows/build.yml",
         "tools/verify_project.py", "tools/test_verify_project.py",
         "app/src/main/java/ro/mdp/remix/MainActivity.kt",
@@ -130,6 +131,12 @@ def check_resources_and_manifest() -> None:
         child.attrib.get("name") == "app_name" and child.text == "MdP RemiX 1&1"
         for child in strings
     ), "App label must be MdP RemiX 1&1")
+    premium_strings = parse_xml(ROOT / "app/src/premiumTest/res/values/strings.xml")
+    check(premium_strings is not None and any(
+        child.tag == "string" and child.attrib.get("name") == "app_name"
+        and child.text == "MdP RemiX Premium Test"
+        for child in premium_strings
+    ), "Premium test label must be MdP RemiX Premium Test")
     permissions = {element.get(ANDROID + "name") for element in manifest.findall("uses-permission")}
     for permission in ("WAKE_LOCK", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK", "POST_NOTIFICATIONS"):
         check("android.permission." + permission in permissions, f"Missing permission: {permission}")
@@ -137,6 +144,8 @@ def check_resources_and_manifest() -> None:
     check(app is not None, "Missing <application> in manifest")
     if app is None:
         return
+    check(app.get(ANDROID + "label") == "@string/app_name",
+          "Manifest must use the variant app_name label")
     activity = next((node for node in app.findall("activity")
                      if node.get(ANDROID + "name") in (".MainActivity", "ro.mdp.remix.MainActivity")), None)
     check(activity is not None, "MainActivity missing from manifest")
@@ -187,6 +196,24 @@ def check_versions_and_wrapper() -> None:
         (r"abortOnError\s*=\s*true", "lint abortOnError"),
     ):
         check(matches(pattern, source), f"Module must declare {description}")
+    production = re.search(r"\bdefaultConfig\s*\{([^{}]*)\}", source, re.DOTALL)
+    check(production is not None and matches(
+        r'applicationId\s*=\s*"ro\.mdp\.remix"', production.group(1),
+    ), "Production applicationId must remain ro.mdp.remix in defaultConfig")
+    premium = re.search(r'create\(\s*"premiumTest"\s*\)\s*\{([^{}]*)\}', source, re.DOTALL)
+    check(premium is not None, "Dedicated premiumTest build type missing")
+    premium_source = premium.group(1) if premium else ""
+    for pattern, description in (
+        (r'initWith\(\s*getByName\(\s*"debug"\s*\)\s*\)', "initialize from debug"),
+        (r'applicationIdSuffix\s*=\s*"\.premiumtest"', "applicationIdSuffix .premiumtest"),
+        (r'versionNameSuffix\s*=\s*"-premium-test"', "versionNameSuffix -premium-test"),
+        (r'signingConfig\s*=\s*signingConfigs\.getByName\(\s*"debug"\s*\)', "debug signing"),
+        (r'matchingFallbacks\s*\+=\s*listOf\(\s*"debug"\s*\)', "debug dependency fallback"),
+    ):
+        check(matches(pattern, premium_source), f"premiumTest must declare {description}")
+    production_source = source[:premium.start()] + source[premium.end():] if premium else source
+    check(not matches(r"\bapplicationIdSuffix\s*=", production_source),
+          "Production variants must not receive an applicationIdSuffix")
     for dependency in (
         "androidx.compose:compose-bom:2024.12.01", "androidx.compose.material3:material3",
         "androidx.activity:activity-compose:1.9.3", "androidx.media3:media3-exoplayer:1.5.1",
@@ -241,15 +268,28 @@ def check_workflow() -> None:
     tasks = "testDebugUnitTest lintDebug assembleDebug"
     check(tasks in source and "bash ./gradlew --no-daemon --stacktrace" in source,
           "CI must run unit tests, lint and assembleDebug through the included wrapper")
+    check("testPremiumTestUnitTest lintPremiumTest assemblePremiumTest" in source,
+          "CI must run premiumTest unit tests, lint and APK assembly")
     for token in (
         'cp app/build/outputs/apk/debug/app-debug.apk dist/MdP-RemiX.apk',
         '/apksigner" verify --verbose dist/MdP-RemiX.apk',
         '/aapt" dump badging dist/MdP-RemiX.apk',
-        'sha256sum MdP-RemiX.apk > SHA256SUMS.txt',
-        'actions/upload-artifact@v4', 'name: MdP-RemiX-debug',
-        'dist/MdP-RemiX.apk', 'dist/SHA256SUMS.txt', 'if-no-files-found: error',
+        "^package: name='ro.mdp.remix'",
+        'cp app/build/outputs/apk/premiumTest/app-premiumTest.apk dist/MdP-RemiX-Premium-Test.apk',
+        '/apksigner" verify --verbose dist/MdP-RemiX-Premium-Test.apk',
+        '/aapt" dump badging dist/MdP-RemiX-Premium-Test.apk',
+        "^package: name='ro.mdp.remix.premiumtest'",
+        "application-label:'MdP RemiX Premium Test'",
+        'sha256sum MdP-RemiX-Premium-Test.apk > SHA256SUMS.txt',
+        'actions/upload-artifact@v4', 'name: MdP-RemiX-premiumtest',
+        'dist/MdP-RemiX-Premium-Test.apk', 'dist/SHA256SUMS.txt', 'if-no-files-found: error',
     ):
         check(token in source, f"Required APK verification/artifact configuration missing: {token}")
+    premium_upload = re.search(
+        r"name: MdP-RemiX-premiumtest\s*\n(?P<settings>(?:[ ]{10,}[^\n]*\n?)+)", source,
+    )
+    check(premium_upload is not None and "dist/MdP-RemiX.apk" not in premium_upload.group("settings"),
+          "Premium test artifact must not include the production APK")
     lines = source.splitlines()
     for index, line in enumerate(lines):
         match = re.match(r"^(\s*)run:\s*(.*)$", line)

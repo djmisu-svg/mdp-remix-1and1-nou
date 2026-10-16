@@ -11,9 +11,9 @@ Testele Python verifică protecțiile configurației CI: refuzul vechiului pache
 
 ## Automat
 
-`bash ./gradlew testDebugUnitTest lintDebug assembleDebug`
+`bash ./gradlew testDebugUnitTest lintDebug assembleDebug testPremiumTestUnitTest lintPremiumTest assemblePremiumTest`
 
-Testele sunt în `app/src/test/java/ro/mdp/remix/data` și `app/src/test/java/ro/mdp/remix/links`. JSON este testat cu implementarea reală `org.json`, nu cu stub-urile Android. Testele includ validarea URL-urilor YouTube oficiale, canonizarea linkurilor, refuzul domeniilor similare și al adreselor invalide, CRUD, reordonarea, favoritele, istoricul și persistența JSON. Lint blochează erorile. CI verifică semnătura APK-ului cu `apksigner` și afișează metadatele pachetului cu `aapt` înainte de publicarea artifactului **MdP-RemiX-debug**, care conține **MdP-RemiX.apk**.
+Testele sunt în `app/src/test/java/ro/mdp/remix/data` și `app/src/test/java/ro/mdp/remix/links`. JSON este testat cu implementarea reală `org.json`, nu cu stub-urile Android. Testele includ validarea URL-urilor YouTube oficiale, canonizarea linkurilor, refuzul domeniilor similare și al adreselor invalide, CRUD, reordonarea, favoritele, istoricul și persistența JSON. Lint blochează erorile. CI verifică semnăturile, identificatorii și numele ambelor APK-uri, apoi instalarea simultană și izolarea datelor într-un emulator Android 35. Artifactul **MdP-RemiX-premiumtest** conține numai **MdP-RemiX-Premium-Test.apk**, cu identificatorul `ro.mdp.remix.premiumtest`, și checksum-ul SHA-256. Aplicația existentă `ro.mdp.remix` rămâne instalată, cu datele ei. Detalii: [PREMIUM_TEST.md](PREMIUM_TEST.md).
 
 ## Pe o tabletă sau un telefon Android
 

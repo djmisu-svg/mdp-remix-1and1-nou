@@ -19,6 +19,13 @@ android {
     }
 
     buildTypes {
+        create("premiumTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".premiumtest"
+            versionNameSuffix = "-premium-test"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

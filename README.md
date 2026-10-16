@@ -72,3 +72,9 @@ See [testing](docs/TESTING.md), [delivery checks](docs/VERIFICARE_LIVRARE.md) an
 ## Project layout
 
 `links` contains strict YouTube URL validation, local collections, JSON persistence and its ViewModel. `external` launches official playback. `data` handles imported audio and atomic local-library storage. `playback` owns the Media3 service/controller. `ui` contains the two responsive Compose libraries. No analytics, advertisements or embedded YouTube playback SDK is included.
+# Premium Test APK (PR #2)
+
+The PR workflow publishes **MdP-RemiX-premiumtest**, containing **MdP-RemiX-Premium-Test.apk** and `SHA256SUMS.txt`. The launcher name is **MdP RemiX Premium Test**, with application ID **ro.mdp.remix.premiumtest**. It installs alongside the existing app without replacing it. The production ID remains **ro.mdp.remix**, and its data stays in its existing private storage. The test app starts with a separate library and settings; do not uninstall the existing application.
+
+See [Premium Test build and verification](docs/PREMIUM_TEST.md) for the current artifact and verification process. PR #2 is not merged automatically.
+

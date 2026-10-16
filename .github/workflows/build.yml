@@ -1,4 +1,4 @@
-name: Android Debug APK
+name: Android Premium Test APK
 
 on:
   push:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    name: Test, lint and build installable APK
+    name: Test, lint and verify Premium Test installation
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -43,8 +43,8 @@ jobs:
       - name: Set up Gradle and validate wrapper
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run unit tests, Android lint and Debug build
-        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug
+      - name: Run unit tests, Android lint and both APK builds
+        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug testPremiumTestUnitTest lintPremiumTest assemblePremiumTest
 
       - name: Verify signed APK and package artifact
         shell: bash
@@ -57,15 +57,36 @@ jobs:
           badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/MdP-RemiX.apk)
           printf '%s\n' "$badging"
           grep -q "^package: name='ro.mdp.remix'" <<< "$badging"
+          grep -Fxq "application-label:'MdP RemiX 1&1'" <<< "$badging"
+          cp app/build/outputs/apk/premiumTest/app-premiumTest.apk dist/MdP-RemiX-Premium-Test.apk
+          test -s dist/MdP-RemiX-Premium-Test.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/MdP-RemiX-Premium-Test.apk
+          premium_badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/MdP-RemiX-Premium-Test.apk)
+          printf '%s\n' "$premium_badging"
+          grep -q "^package: name='ro.mdp.remix.premiumtest'" <<< "$premium_badging"
+          grep -Fxq "application-label:'MdP RemiX Premium Test'" <<< "$premium_badging"
           cd dist
-          sha256sum MdP-RemiX.apk > SHA256SUMS.txt
+          sha256sum MdP-RemiX-Premium-Test.apk > SHA256SUMS.txt
 
-      - name: Upload installable Debug APK
+      - name: Enable emulator hardware acceleration
+        run: sudo chmod 666 /dev/kvm
+
+      - name: Verify side-by-side installation on Android 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash tools/verify_side_by_side_install.sh dist/MdP-RemiX.apk dist/MdP-RemiX-Premium-Test.apk
+
+      - name: Upload installable Premium Test APK
         uses: actions/upload-artifact@v4
         with:
-          name: MdP-RemiX-debug
+          name: MdP-RemiX-premiumtest
           path: |
-            dist/MdP-RemiX.apk
+            dist/MdP-RemiX-Premium-Test.apk
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -78,6 +99,6 @@ jobs:
           path: |
             app/build/reports/tests/
             app/build/test-results/
-            app/build/reports/lint-results-debug.*
+            app/build/reports/lint-results-*
           if-no-files-found: ignore
           retention-days: 14

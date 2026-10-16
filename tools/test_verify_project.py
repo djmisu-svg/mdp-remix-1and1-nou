@@ -107,6 +107,27 @@ class ProjectVerifierTests(unittest.TestCase):
         self.assert_detected(verifier.check_resources_and_manifest,
                              "Missing permission: FOREGROUND_SERVICE_MEDIA_PLAYBACK")
 
+    def test_rejects_changing_production_application_id(self):
+        self.assertEqual([], self.run_check(verifier.check_versions_and_wrapper))
+        self.replace("app/build.gradle.kts", 'applicationId = "ro.mdp.remix"',
+                     'applicationId = "ro.mdp.remix.premiumtest"')
+        self.assert_detected(verifier.check_versions_and_wrapper,
+                             "Production applicationId must remain ro.mdp.remix")
+
+    def test_rejects_missing_premium_test_application_suffix(self):
+        self.assertEqual([], self.run_check(verifier.check_versions_and_wrapper))
+        self.replace("app/build.gradle.kts", 'applicationIdSuffix = ".premiumtest"',
+                     'applicationIdSuffix = ""')
+        self.assert_detected(verifier.check_versions_and_wrapper,
+                             "premiumTest must declare applicationIdSuffix .premiumtest")
+
+    def test_rejects_misleading_premium_test_label(self):
+        self.assertEqual([], self.run_check(verifier.check_resources_and_manifest))
+        self.replace("app/src/premiumTest/res/values/strings.xml", "MdP RemiX Premium Test",
+                     "MdP RemiX 1&amp;1")
+        self.assert_detected(verifier.check_resources_and_manifest,
+                             "Premium test label must be MdP RemiX Premium Test")
+
 
 if __name__ == "__main__":
     unittest.main()
