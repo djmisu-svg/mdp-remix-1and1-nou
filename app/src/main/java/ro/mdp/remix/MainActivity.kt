@@ -1,7 +1,7 @@
 package ro.mdp.remix
 
 import android.Manifest
-import android.app.ActivityNotFoundException
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager

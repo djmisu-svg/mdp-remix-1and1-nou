@@ -68,6 +68,7 @@ fun RemixApp(
     var query by rememberSaveable { mutableStateOf("") }
     var selectedAlbum by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
+    var deckPowered by rememberSaveable { mutableStateOf(true) }
     var creatingPlaylist by rememberSaveable { mutableStateOf(false) }
     var trackForPlaylist by remember { mutableStateOf<Track?>(null) }
     var trackToRemove by remember { mutableStateOf<Track?>(null) }
@@ -108,6 +109,7 @@ fun RemixApp(
                         onTogglePlayback = onTogglePlayback, onNext = onNext, onPrevious = onPrevious,
                         onSeek = onSeek, onVolume = onVolume, onFavorite = onFavorite,
                         isFavorite = playback.currentTrackId in library.favorites,
+                        poweredOverride = deckPowered, onPoweredChange = { deckPowered = it },
                     )
                     Text(uiText("FIȘIERE LOCALE / FĂRĂ CONT / OFFLINE", "LOCAL FILES / NO ACCOUNT / OFFLINE"),
                         color = Muted, fontSize = 8.sp, letterSpacing = 1.5.sp,

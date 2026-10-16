@@ -114,9 +114,18 @@ fun PremiumTapeDeck(
     onFavorite: (String) -> Unit,
     isFavorite: Boolean = false,
     compact: Boolean = false,
+    poweredOverride: Boolean? = null,
+    onPoweredChange: ((Boolean) -> Unit)? = null,
 ) {
-    var powered by rememberSaveable { mutableStateOf(true) }
-    LaunchedEffect(playback.isPlaying) { if (playback.isPlaying) powered = true }
+    var internalPowered by rememberSaveable { mutableStateOf(true) }
+    val powered = poweredOverride ?: internalPowered
+    val changePower: (Boolean) -> Unit = { value ->
+        internalPowered = value
+        onPoweredChange?.invoke(value)
+    }
+    LaunchedEffect(playback.isPlaying) {
+        if (playback.isPlaying) changePower(true)
+    }
     val meters by AudioMeters.levels.collectAsStateWithLifecycle()
     val running = powered && playback.isPlaying
     val progress = if (playback.durationMs > 0) {
@@ -156,7 +165,7 @@ fun PremiumTapeDeck(
                 PowerControl(powered, Modifier.padding(horizontal = 12.dp)) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     if (powered && playback.isPlaying) onTogglePlayback()
-                    powered = !powered
+                    changePower(!powered)
                 }
                 AnalogMeter(right, if (running) meters.peakRight else 0f, "R", "vu_right", Modifier.weight(1f))
             }
