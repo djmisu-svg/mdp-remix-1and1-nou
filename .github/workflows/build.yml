@@ -82,7 +82,7 @@ jobs:
           emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
             bash tools/verify_side_by_side_install.sh dist/MdP-RemiX.apk dist/MdP-RemiX-Premium-Test.apk
-            bash ./gradlew --no-daemon --stacktrace connectedPremiumTestAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+            bash ./gradlew --no-daemon --stacktrace connectedPremiumTestAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true || { mkdir -p dist/screenshots; adb logcat -d -t 1500 | grep -E 'ro\.mdp\.remix|AudioTrack|AudioSink|Media3|AndroidRuntime|Meter|ExoPlayer|TestRunner|PremiumUiTest' > dist/logcat.txt || true; cat dist/logcat.txt; python3 -c 'from pathlib import Path; import xml.etree.ElementTree as ET; [print("MDP_TEST_FAILURE " + case.get("name", "") + "\n" + "".join(failure.itertext())) for path in Path("app/build/outputs/androidTest-results").rglob("*.xml") for case in ET.parse(path).getroot().iter("testcase") for failure in list(case) if failure.tag in ("failure", "error")]'; adb pull /sdcard/Android/data/ro.mdp.remix.premiumtest/files/screenshots dist/screenshots/phone || true; python3 -c 'import base64; from pathlib import Path; previews = [("MDP_PREVIEW_PHONE=", "phone-studio.jpg"), ("MDP_PREVIEW_YOUTUBE=", "phone-youtube.jpg"), ("MDP_PREVIEW_METER_FAILURE=", "phone-meter-failure.jpg"), ("MDP_PREVIEW_PLAYLIST_FAILURE=", "phone-playlist-failure.jpg")]; [print(prefix + base64.b64encode(path.read_bytes()).decode("ascii")) for prefix, name in previews for path in list(Path("dist/screenshots").rglob(name))[:1]]'; exit 1; }
             mkdir -p dist/screenshots
             adb pull /sdcard/Android/data/ro.mdp.remix.premiumtest/files/screenshots dist/screenshots/phone
             adb shell am force-stop ro.mdp.remix.premiumtest
@@ -118,6 +118,7 @@ jobs:
             app/build/reports/lint-results-*
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+            dist/logcat.txt
           if-no-files-found: ignore
           retention-days: 14
 

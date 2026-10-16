@@ -2,6 +2,8 @@ package ro.mdp.remix.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.os.Process
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -21,6 +23,7 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         AudioMeters.reset()
+        Log.d("MdP.AudioMeters", "Service created: pid=${Process.myPid()}; meter=${System.identityHashCode(AudioMeters)}")
 
         val player = ExoPlayer.Builder(this, MeterRenderersFactory(this))
             .setAudioAttributes(
@@ -34,6 +37,8 @@ class PlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
         player.addListener(object : Player.Listener {
+            private var lastIsPlaying = false
+
             override fun onEvents(player: Player, events: Player.Events) {
                 if (events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
                     events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)
@@ -42,10 +47,15 @@ class PlaybackService : MediaSessionService() {
                 }
                 // Includes pause, buffering, audio-focus loss, errors and end-of-queue.
                 AudioMeters.setPlaybackActive(player.isPlaying)
+                if (lastIsPlaying != player.isPlaying) {
+                    lastIsPlaying = player.isPlaying
+                    Log.d("MdP.AudioMeters", "Playback active=${player.isPlaying}; state=${player.playbackState}; ready=${player.playWhenReady}; suppression=${player.playbackSuppressionReason}")
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 AudioMeters.setPlaybackActive(false)
+                Log.e("MdP.AudioMeters", "Playback failed: code=${error.errorCodeName}")
             }
         })
 

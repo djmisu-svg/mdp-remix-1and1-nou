@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -134,7 +135,7 @@ class PremiumUiTest {
                 controller.prepare()
                 controller.play()
             }
-            awaitCondition("Decoded stereo audio must drive both VU channels") {
+            awaitCondition("Decoded stereo audio must drive both VU channels", { playbackDiagnostics(controller) }) {
                 val levels = AudioMeters.levels.value
                 levels.left > 0.05f && levels.right > 0.05f
             }
@@ -145,10 +146,13 @@ class PremiumUiTest {
             assertTrue("Decoded right peak must be present", measured.peakRight > 0f)
             captureScreen("phone-live-meters")
             instrumentation.runOnMainSync { controller.pause() }
-            awaitCondition("Pausing playback must reset both source meters") {
+            awaitCondition("Pausing playback must reset both source meters", { playbackDiagnostics(controller) }) {
                 val levels = AudioMeters.levels.value
                 levels.left == 0f && levels.right == 0f
             }
+        } catch (failure: Throwable) {
+            runCatching { captureScreen("phone-meter-failure") }
+            throw failure
         } finally {
             instrumentation.runOnMainSync {
                 controller.stop()
@@ -167,29 +171,56 @@ class PremiumUiTest {
     }
 
     private fun waitForTag(tag: String) {
-        compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+        try {
+            compose.waitUntil(timeoutMillis = 10_000) {
+                compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (failure: ComposeTimeoutException) {
+            throw AssertionError("The UI tag '$tag' did not appear within 10 seconds", failure)
         }
     }
 
     private fun scrollToPlaylist(text: String) {
-        compose.waitUntil(timeoutMillis = 10_000) {
-            try {
-                compose.onNodeWithTag("youtube_grid").performScrollToNode(hasText(text))
-                true
-            } catch (_: AssertionError) {
-                false
+        waitForTag("youtube_grid")
+        var lastFailure: AssertionError? = null
+        try {
+            compose.waitUntil(timeoutMillis = 10_000) {
+                try {
+                    compose.onNodeWithTag("youtube_grid").performScrollToNode(hasText(text))
+                    true
+                } catch (failure: AssertionError) {
+                    lastFailure = failure
+                    false
+                }
             }
+        } catch (failure: ComposeTimeoutException) {
+            runCatching { captureScreen("phone-playlist-failure") }
+            throw AssertionError("Could not scroll to playlist '$text': ${lastFailure?.message}", failure)
         }
     }
 
-    private fun awaitCondition(message: String, condition: () -> Boolean) {
+    private fun awaitCondition(message: String, diagnostics: () -> String, condition: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
         while (System.nanoTime() < deadline) {
             if (condition()) return
             Thread.sleep(40)
         }
-        assertTrue(message, condition())
+        assertTrue("$message. ${diagnostics()}", condition())
+    }
+
+    private fun playbackDiagnostics(controller: MediaController): String {
+        var details = ""
+        instrumentation.runOnMainSync {
+            val formats = controller.currentTracks.groups.flatMap { group ->
+                (0 until group.length).map { group.getTrackFormat(it).toString() }
+            }
+            details = "pid=${android.os.Process.myPid()}, meterIdentity=${System.identityHashCode(AudioMeters)}, " +
+                "state=${controller.playbackState}, isPlaying=${controller.isPlaying}, " +
+                "playWhenReady=${controller.playWhenReady}, suppression=${controller.playbackSuppressionReason}, " +
+                "position=${controller.currentPosition}, duration=${controller.duration}, formats=$formats, " +
+                "error=${controller.playerError?.stackTraceToString()}, meters=${AudioMeters.levels.value}"
+        }
+        return details
     }
 
     private fun captureScreen(name: String) {
@@ -200,10 +231,8 @@ class PremiumUiTest {
         FileOutputStream(File(directory, "$name.png")).use { stream ->
             assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
         }
-        if (name == "phone-studio" || name == "phone-youtube") {
-            FileOutputStream(File(directory, "$name.jpg")).use { stream ->
-                assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream))
-            }
+        FileOutputStream(File(directory, "$name.jpg")).use { stream ->
+            assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream))
         }
         bitmap.recycle()
     }

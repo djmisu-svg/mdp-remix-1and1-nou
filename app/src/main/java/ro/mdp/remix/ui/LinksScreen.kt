@@ -188,7 +188,7 @@ fun LinksScreen(viewModel: LinkViewModel, onOpenLink: (SavedMusicLink) -> Unit) 
         LazyVerticalGrid(
             columns = GridCells.Adaptive(320.dp),
             state = gridState,
-            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            modifier = Modifier.fillMaxSize().padding(innerPadding).testTag("youtube_grid"),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 40.dp),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
