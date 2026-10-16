@@ -300,8 +300,31 @@ def check_workflow() -> None:
     )
     check(premium_upload is not None and "dist/MdP-RemiX.apk" not in premium_upload.group("settings"),
           "Premium test artifact must not include the production APK")
+    steps = re.findall(r"(?ms)^      - name:.*?(?=^      - name:|\Z)", source)
+    build_index = next((index for index, step in enumerate(steps)
+                        if matches(r"^\s+id:\s*build_apks\s*$", step)), -1)
+    verify_index = next((index for index, step in enumerate(steps)
+                         if matches(r"^\s+id:\s*verify_apks\s*$", step)), -1)
+    upload_index = next((index for index, step in enumerate(steps)
+                         if "name: MdP-RemiX-premiumtest\n" in step), -1)
+    emulator_index = next((index for index, step in enumerate(steps)
+                           if "reactivecircus/android-emulator-runner@v2" in step), -1)
+    check(0 <= build_index < verify_index < upload_index < emulator_index,
+          "Verified APK must upload before emulator tests so UI failures do not hide the build")
+    upload_step = steps[upload_index] if upload_index >= 0 else ""
+    gate = "${{ !cancelled() && steps.build_apks.outcome == 'success' && steps.verify_apks.outcome == 'success' }}"
+    check("if: " + gate in upload_step,
+          "APK upload must require successful build and package verification")
+    emulator_step = steps[emulator_index] if emulator_index >= 0 else ""
+    check("continue-on-error" not in emulator_step,
+          "Emulator test failures must fail the workflow")
+    check(not re.search(r"\b(?:base64|b64encode|hexdump|xxd)\b|MDP_PREVIEW_", source, re.IGNORECASE),
+          "Workflow logs must not encode screenshots or binary data")
     lines = source.splitlines()
     for index, line in enumerate(lines):
+        check(not re.search(r"\bcat\s+[^;\n]*(?:\.png|\.jpe?g)\b", line, re.IGNORECASE) and
+              not re.search(r"\badb\s+(?:exec-out|shell)\s+screencap\s+-p\s*(?:$|[|;])", line),
+              f"Workflow must keep screenshot bytes out of logs at line {index + 1}")
         match = re.match(r"^(\s*)(?:run|script):\s*(.*)$", line)
         if not match:
             continue

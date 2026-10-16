@@ -18,7 +18,9 @@ PR #2 implements the premium redesign across Studio, the YouTube library, and Pr
 
 CI runs JVM unit tests for both build variants, including 12 PCM/meter tests, Android lint, both APK builds, signature/package/label validation, and an Android 35 coexistence test with a separately signed production fixture.
 
-Premium Test instrumentation exercises navigation, Romanian/English selection, power control, real YouTube playlist creation/rename/recreation, and real stereo WAV playback through Media3 into the meters followed by a pause/reset check. It saves phone screenshots; CI also captures a tablet layout and publishes screenshots and verification reports separately from the installable APK.
+Premium Test instrumentation exercises navigation, Romanian/English selection, power control, real YouTube playlist creation/rename/recreation, and real stereo WAV playback through Media3 into the meters followed by a pause/reset check. A fourth real-Android regression covers empty Media3 pipeline buffers and transparent PCM output. It saves phone screenshots; CI also captures a tablet layout and publishes screenshots and verification reports separately from the installable APK.
+
+The verified APK uploads before emulator tests, so a later UI failure remains visible without hiding a successfully built artifact. Screenshots are artifact files only; no image data is printed in logs. See [emulator failure analysis](EMULATOR_VERIFICATION.md).
 
 Run results and downloadable artifacts on GitHub Actions are the source of truth; this source document does not assert an unexecuted test passed.
 

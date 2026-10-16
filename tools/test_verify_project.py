@@ -143,6 +143,47 @@ class ProjectVerifierTests(unittest.TestCase):
         self.assert_detected(verifier.check_workflow,
                              "CI must execute Premium Test instrumentation")
 
+    def test_rejects_screenshot_data_in_logs(self):
+        workflow = self.fixture / ".github/workflows/build.yml"
+        original = workflow.read_text(encoding="utf-8")
+        for command in (
+            "base64 dist/screenshots/phone/phone-studio.jpg",
+            "cat dist/screenshots/tablet-studio.png",
+            "adb exec-out screencap -p",
+        ):
+            with self.subTest(command=command):
+                workflow.write_text(original + "\n      - name: Invalid image logging\n        run: " + command + "\n",
+                                    encoding="utf-8")
+                errors = self.run_check(verifier.check_workflow)
+                self.assertTrue(any("logs" in error for error in errors), errors)
+
+    def test_rejects_apk_upload_after_emulator_tests(self):
+        workflow = self.fixture / ".github/workflows/build.yml"
+        source = workflow.read_text(encoding="utf-8")
+        start = source.index("      - name: Upload installable Premium Test APK\n")
+        end = source.index("      - name: Enable emulator hardware acceleration\n", start)
+        upload = source[start:end]
+        without_upload = source[:start] + source[end:]
+        marker = "      - name: Upload test and lint reports\n"
+        self.assertIn(marker, without_upload)
+        workflow.write_text(without_upload.replace(marker, upload + marker, 1), encoding="utf-8")
+        self.assert_detected(verifier.check_workflow,
+                             "Verified APK must upload before emulator tests")
+
+    def test_rejects_upload_without_successful_build_and_verification(self):
+        self.replace(".github/workflows/build.yml",
+                     "if: ${{ !cancelled() && steps.build_apks.outcome == 'success' && steps.verify_apks.outcome == 'success' }}",
+                     "if: always()")
+        self.assert_detected(verifier.check_workflow,
+                             "APK upload must require successful build and package verification")
+
+    def test_rejects_ignoring_emulator_test_failures(self):
+        self.replace(".github/workflows/build.yml",
+                     "uses: reactivecircus/android-emulator-runner@v2",
+                     "continue-on-error: true\n        uses: reactivecircus/android-emulator-runner@v2")
+        self.assert_detected(verifier.check_workflow,
+                             "Emulator test failures must fail the workflow")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -49,6 +49,11 @@ internal class MeterAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
+        // AudioProcessingPipeline probes processors with its shared EMPTY_BUFFER.
+        // BaseAudioProcessor initially uses that same instance internally, so copying
+        // a zero-length input via replaceOutputBuffer(0).put(input) would self-copy.
+        if (!inputBuffer.hasRemaining()) return
+
         val token = AudioMeters.activeToken()
         val analyzer = accumulator
         if (!loggedFirstInput && inputBuffer.hasRemaining()) {
@@ -57,9 +62,6 @@ internal class MeterAudioProcessor : BaseAudioProcessor() {
         }
         if (token != activeGeneration || token == null) {
             analyzer?.reset()
-            if (token != activeGeneration) {
-                Log.d("MdP.AudioMeters", "PCM playback generation: $activeGeneration -> $token")
-            }
             activeGeneration = token
             loggedPublication = false
         }

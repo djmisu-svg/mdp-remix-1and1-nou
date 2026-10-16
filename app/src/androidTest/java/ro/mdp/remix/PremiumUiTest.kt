@@ -59,6 +59,7 @@ class PremiumUiTest {
     fun studioNavigationLanguageAndDeckPowerWork() {
         assertEquals("ro.mdp.remix.premiumtest", target.packageName)
         waitForTag("local_library")
+        assertNoSystemErrorDialog()
         compose.onNodeWithTag("nav_studio").assertIsSelected()
         compose.onNodeWithTag("deck_power").performScrollTo().assertIsOn().performClick().assertIsOff()
         compose.onNodeWithTag("deck_play").assertIsNotEnabled()
@@ -113,6 +114,7 @@ class PremiumUiTest {
     @Test
     fun realDecodedStereoAudioDrivesMetersAndPauseClearsThem() {
         waitForTag("local_library")
+        assertNoSystemErrorDialog()
         val audioFile = createStereoWave()
         lateinit var future: ListenableFuture<MediaController>
         instrumentation.runOnMainSync {
@@ -165,6 +167,7 @@ class PremiumUiTest {
 
     private fun selectEnglish() {
         waitForTag("nav_settings")
+        assertNoSystemErrorDialog()
         compose.onNodeWithTag("nav_settings").performClick()
         waitForTag("language_english")
         compose.onNodeWithTag("language_english").performScrollTo().performClick()
@@ -224,6 +227,7 @@ class PremiumUiTest {
     }
 
     private fun captureScreen(name: String) {
+        assertNoSystemErrorDialog()
         val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot()) {
             "A screenshot must be available on the test emulator"
         }
@@ -235,6 +239,16 @@ class PremiumUiTest {
             assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream))
         }
         bitmap.recycle()
+    }
+
+    private fun assertNoSystemErrorDialog() {
+        val root = instrumentation.uiAutomation.rootInActiveWindow ?: return
+        val errors = listOf("isn't responding", "isn’t responding", "keeps stopping").flatMap { phrase ->
+            root.findAccessibilityNodeInfosByText(phrase).filter { node ->
+                node.isVisibleToUser && node.packageName?.toString() != target.packageName
+            }.map { node -> node.text?.toString() ?: node.contentDescription?.toString() ?: phrase }
+        }
+        assertTrue("System error dialog is visible: ${errors.joinToString()}", errors.isEmpty())
     }
 
     private fun createStereoWave(): File {
