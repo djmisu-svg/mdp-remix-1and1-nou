@@ -21,6 +21,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
+import androidx.compose.material3.Column
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -57,6 +68,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             RemixTheme {
                 var localMusic by rememberSaveable { mutableStateOf(false) }
+                var showSettings by rememberSaveable { mutableStateOf(false) }
+                val preferences = remember { getSharedPreferences("mdp_settings", Context.MODE_PRIVATE) }
+                var english by rememberSaveable { mutableStateOf(preferences.getBoolean("english", false)) }
                 var externalError by rememberSaveable { mutableStateOf<String?>(null) }
                 Scaffold(
                     contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -64,21 +78,44 @@ class MainActivity : ComponentActivity() {
                         NavigationBar {
                             NavigationBarItem(
                                 selected = !localMusic,
-                                onClick = { localMusic = false },
+                                onClick = { localMusic = false; showSettings = false },
                                 icon = { Icon(Icons.Default.SmartDisplay, contentDescription = null) },
-                                label = { Text("YouTube & linkuri") },
+                                label = { Text(if (english) "YouTube & links" else "YouTube & linkuri") },
                             )
                             NavigationBarItem(
                                 selected = localMusic,
-                                onClick = { localMusic = true },
+                                onClick = { localMusic = true; showSettings = false },
                                 icon = { Icon(Icons.Default.LibraryMusic, contentDescription = null) },
-                                label = { Text("Muzică locală") },
+                                label = { Text(if (english) "Local music" else "Muzică locală") },
+                            )
+                            NavigationBarItem(
+                                selected = showSettings,
+                                onClick = { showSettings = true },
+                                icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                                label = { Text(if (english) "Settings" else "Setări") },
                             )
                         }
                     },
                 ) { padding ->
                     Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                        if (localMusic) {
+                        if (showSettings) {
+                            Column(modifier = Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Text(if (english) "Language" else "Limbă")
+                                OutlinedButton(onClick = { english = false; preferences.edit().putBoolean("english", false).apply() }, modifier = Modifier.fillMaxWidth()) { Text(if (english) "Romanian" else "Română" + if (!english) " ✓" else "") }
+                                OutlinedButton(onClick = { english = true; preferences.edit().putBoolean("english", true).apply() }, modifier = Modifier.fillMaxWidth()) { Text("English" + if (english) " ✓" else "") }
+                                Button(onClick = {
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, "MdP RemiX 1&1 – https://github.com/djmisu-svg/mdp-remix-1and1-nou/releases")
+                                    }
+                                    startActivity(Intent.createChooser(intent, if (english) "Share app" else "Distribuie aplicația"))
+                                }, modifier = Modifier.fillMaxWidth()) { Text(if (english) "Share app" else "Distribuie aplicația") }
+                                OutlinedButton(onClick = {
+                                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/djmisu-svg/mdp-remix-1and1-nou/releases")))
+                                }, modifier = Modifier.fillMaxWidth()) { Text(if (english) "Check for updates" else "Verifică actualizări") }
+                                Text(if (english) "Updates open the releases page. Installation requires Android confirmation. Saved local files are not shared automatically." else "Actualizările se deschid în pagina de versiuni. Instalarea cere confirmarea Android. Fișierele locale nu sunt distribuite automat.")
+                            }
+                        } else if (localMusic) {
                             LocalMusicScreen()
                         } else {
                             LinksScreen(
