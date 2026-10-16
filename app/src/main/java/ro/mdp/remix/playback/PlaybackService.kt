@@ -6,6 +6,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
@@ -19,8 +20,9 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        AudioMeters.reset()
 
-        val player = ExoPlayer.Builder(this)
+        val player = ExoPlayer.Builder(this, MeterRenderersFactory(this))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -31,6 +33,21 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+        player.addListener(object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
+                    events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)
+                ) {
+                    AudioMeters.clear()
+                }
+                // Includes pause, buffering, audio-focus loss, errors and end-of-queue.
+                AudioMeters.setPlaybackActive(player.isPlaying)
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                AudioMeters.setPlaybackActive(false)
+            }
+        })
 
         val openApp = PendingIntent.getActivity(
             this,
@@ -64,6 +81,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        AudioMeters.reset()
         mediaSession?.let { session ->
             session.player.release()
             session.release()

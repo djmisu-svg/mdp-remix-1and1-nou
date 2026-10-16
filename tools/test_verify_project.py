@@ -128,6 +128,21 @@ class ProjectVerifierTests(unittest.TestCase):
         self.assert_detected(verifier.check_resources_and_manifest,
                              "Premium test label must be MdP RemiX Premium Test")
 
+    def test_rejects_instrumentation_targeting_production_debug_app(self):
+        self.assertEqual([], self.run_check(verifier.check_versions_and_wrapper))
+        self.replace("app/build.gradle.kts", 'testBuildType = "premiumTest"',
+                     'testBuildType = "debug"')
+        self.assert_detected(verifier.check_versions_and_wrapper,
+                             "instrumentation targets premiumTest")
+
+    def test_rejects_missing_emulator_ui_test_execution(self):
+        self.assertEqual([], self.run_check(verifier.check_workflow))
+        self.replace(".github/workflows/build.yml",
+                     "bash ./gradlew --no-daemon --stacktrace connectedPremiumTestAndroidTest",
+                     "true")
+        self.assert_detected(verifier.check_workflow,
+                             "CI must execute Premium Test instrumentation")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -78,6 +78,7 @@ def check_structure() -> None:
         "app/src/main/java/ro/mdp/remix/links/LinkViewModel.kt",
         "app/src/main/java/ro/mdp/remix/ui/LinksScreen.kt",
         "app/src/main/java/ro/mdp/remix/external/YouTubeLauncher.kt",
+        "app/src/androidTest/java/ro/mdp/remix/PremiumUiTest.kt",
     ]
     for relative in required:
         check((ROOT / relative).is_file(), f"Missing required file: {relative}")
@@ -193,6 +194,7 @@ def check_versions_and_wrapper() -> None:
         (r"targetCompatibility\s*=\s*JavaVersion\.VERSION_17", "Java target 17"),
         (r'jvmTarget\s*=\s*"17"', "Kotlin JVM 17"),
         (r"compose\s*=\s*true", "Compose enabled"),
+        (r'testBuildType\s*=\s*"premiumTest"', "instrumentation targets premiumTest"),
         (r"abortOnError\s*=\s*true", "lint abortOnError"),
     ):
         check(matches(pattern, source), f"Module must declare {description}")
@@ -218,6 +220,7 @@ def check_versions_and_wrapper() -> None:
         "androidx.compose:compose-bom:2024.12.01", "androidx.compose.material3:material3",
         "androidx.activity:activity-compose:1.9.3", "androidx.media3:media3-exoplayer:1.5.1",
         "androidx.media3:media3-session:1.5.1", "junit:junit:4.13.2",
+        "androidx.compose.ui:ui-test-junit4", "androidx.test:runner:1.6.2",
     ):
         check(dependency in source, f"Required dependency missing: {dependency}")
     check(not matches(r'[\"\'][^\"\']*:(?:\+|latest\.[^\"\']+)[\"\']', source), "Dynamic dependency version found")
@@ -270,6 +273,13 @@ def check_workflow() -> None:
           "CI must run unit tests, lint and assembleDebug through the included wrapper")
     check("testPremiumTestUnitTest lintPremiumTest assemblePremiumTest" in source,
           "CI must run premiumTest unit tests, lint and APK assembly")
+    check("assemblePremiumTestAndroidTest" in source,
+          "CI must compile the Premium Test instrumentation APK")
+    check("connectedPremiumTestAndroidTest" in source and
+          "reactivecircus/android-emulator-runner@v2" in source,
+          "CI must execute Premium Test instrumentation on an Android emulator")
+    check("-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true" in source,
+          "CI must preserve emulator test files for screenshot collection")
     for token in (
         'cp app/build/outputs/apk/debug/app-debug.apk dist/MdP-RemiX.apk',
         '/apksigner" verify --verbose dist/MdP-RemiX.apk',
@@ -292,7 +302,7 @@ def check_workflow() -> None:
           "Premium test artifact must not include the production APK")
     lines = source.splitlines()
     for index, line in enumerate(lines):
-        match = re.match(r"^(\s*)run:\s*(.*)$", line)
+        match = re.match(r"^(\s*)(?:run|script):\s*(.*)$", line)
         if not match:
             continue
         indentation, value = match.groups()

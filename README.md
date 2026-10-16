@@ -1,3 +1,7 @@
+# Premium black / red interface
+
+PR #2 now includes the complete Studio, YouTube library, and Preferences redesign, with an interactive reel-to-reel deck and real PCM-driven VU meters. See [premium features and verification](docs/PREMIUM_UI.md). Download the isolated **MdP-RemiX-premiumtest** artifact from the latest successful PR build; the original application and its data stay separate.
+
 # MdP RemiX 1&1
 
 Native Android music player and YouTube playlist-link manager, written in Kotlin with Jetpack Compose and AndroidX Media3. Black, gold and charcoal interface with Romanian labels; responsive layouts for phones and tablets. Android 6.0/API 23 or later.

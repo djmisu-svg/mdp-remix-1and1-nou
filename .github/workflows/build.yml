@@ -44,7 +44,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests, Android lint and both APK builds
-        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug testPremiumTestUnitTest lintPremiumTest assemblePremiumTest
+        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug testPremiumTestUnitTest lintPremiumTest assemblePremiumTest assemblePremiumTestAndroidTest
 
       - name: Verify signed APK and package artifact
         shell: bash
@@ -71,15 +71,31 @@ jobs:
       - name: Enable emulator hardware acceleration
         run: sudo chmod 666 /dev/kvm
 
-      - name: Verify side-by-side installation on Android 35
+      - name: Verify installation, UI and live audio meters on Android 35
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           target: google_apis
           arch: x86_64
+          profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash tools/verify_side_by_side_install.sh dist/MdP-RemiX.apk dist/MdP-RemiX-Premium-Test.apk
+          script: |
+            bash tools/verify_side_by_side_install.sh dist/MdP-RemiX.apk dist/MdP-RemiX-Premium-Test.apk
+            bash ./gradlew --no-daemon --stacktrace connectedPremiumTestAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+            mkdir -p dist/screenshots
+            adb pull /sdcard/Android/data/ro.mdp.remix.premiumtest/files/screenshots dist/screenshots/phone
+            adb shell am force-stop ro.mdp.remix.premiumtest
+            adb shell wm size 1600x2560
+            adb shell wm density 240
+            adb shell am start -W -n ro.mdp.remix.premiumtest/ro.mdp.remix.MainActivity
+            sleep 2
+            adb shell screencap -p /sdcard/mdp-premium-tablet.png
+            adb pull /sdcard/mdp-premium-tablet.png dist/screenshots/tablet-studio.png
+            python3 -c 'import base64; from pathlib import Path; previews = [("MDP_PREVIEW_PHONE=", "phone-studio.jpg"), ("MDP_PREVIEW_YOUTUBE=", "phone-youtube.jpg"), ("MDP_PREVIEW_TABLET=", "tablet-studio.png")]; [print(prefix + base64.b64encode(next(Path("dist/screenshots").rglob(name)).read_bytes()).decode("ascii")) for prefix, name in previews]'
+            adb shell wm size reset
+            adb shell wm density reset
+            test "$(adb shell run-as ro.mdp.remix cat files/premiumtest-install-marker.txt | tr -d '\r')" = 'production-data-preserved'
 
       - name: Upload installable Premium Test APK
         uses: actions/upload-artifact@v4
@@ -100,5 +116,16 @@ jobs:
             app/build/reports/tests/
             app/build/test-results/
             app/build/reports/lint-results-*
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload phone and tablet screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MdP-RemiX-premium-screenshots
+          path: dist/screenshots/
           if-no-files-found: ignore
           retention-days: 14
