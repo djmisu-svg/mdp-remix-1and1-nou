@@ -170,7 +170,10 @@ class BackgroundMediaTest {
 
     @Test fun safGifFramesAnimatePauseAndPersistWithoutInterruptingMusic() {
         val priorAudio = ReelMotion.snapshot().elapsedPlayingNanos
+        val originalRenderer = nativeRendererIdentity()
         val gif = chooseDocument("mdp-test-animation.gif", BackgroundKind.GIF)
+        assertEquals("The first selection must reach the existing Activity and native view immediately",
+            originalRenderer, nativeRendererIdentity())
         assertTrue("SAF must provide a persisted read grant", target.contentResolver.persistedUriPermissions.any {
             it.uri == gif && it.isReadPermission
         })
@@ -210,6 +213,18 @@ class BackgroundMediaTest {
 
         assertLifecyclePausesOnlyBackground()
         capture("phone-gif-background")
+        assertForegroundContinues(priorAudio)
+
+        val selectedRenderer = nativeRendererIdentity()
+        clickSetting("background_restore")
+        await("Restore Original must replace the GIF in the existing renderer") {
+            val saved = settings()
+            val rendered = BackgroundMediaDiagnostics.state.value
+            saved.kind == BackgroundKind.ORIGINAL && saved.uri == null && rendered.kind == BackgroundKind.ORIGINAL &&
+                rendered.source == resolveOriginalBackgroundAsset(target)?.let { "asset:///$it" }
+        }
+        assertEquals("Restore must update the native view without Activity recreation",
+            selectedRenderer, nativeRendererIdentity())
         assertForegroundContinues(priorAudio)
     }
 
@@ -412,6 +427,16 @@ class BackgroundMediaTest {
             val levels = AudioMeters.levels.value
             levels.left > levels.right + .2f && levels.right > 0f
         }
+    }
+
+    private fun nativeRendererIdentity(): Pair<Int, Int> {
+        var identity: Pair<Int, Int>? = null
+        instrumentation.runOnMainSync {
+            val activity = checkNotNull(resumedActivity())
+            val host = descendants(activity.window.decorView).single { it.tag == "background_media_host" }
+            identity = System.identityHashCode(activity) to System.identityHashCode(host)
+        }
+        return checkNotNull(identity)
     }
 
     private fun nativePixelHash(): Int {

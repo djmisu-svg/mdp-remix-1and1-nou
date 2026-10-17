@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
                 var destination by rememberSaveable { mutableStateOf(Destination.STUDIO) }
                 var externalError by rememberSaveable { mutableStateOf<String?>(null) }
                 val screenStates = rememberSaveableStateHolder()
-                val backgroundSettings by backgroundViewModel.settings.collectAsStateWithLifecycle()
+                val backgroundSettings = backgroundViewModel.settings.collectAsStateWithLifecycle()
                 val backgroundRenderError = remember(backgroundViewModel) {
                     { message: String? ->
                         if (message == null) backgroundViewModel.clearError()

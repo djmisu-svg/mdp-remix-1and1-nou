@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,7 +70,7 @@ object BackgroundMediaDiagnostics {
 /** Native media lives behind Compose controls and never participates in touch handling. */
 @Composable
 fun BackgroundMediaLayer(
-    settings: BackgroundSettings,
+    settings: State<BackgroundSettings>,
     modifier: Modifier = Modifier,
     onError: (String?) -> Unit = {},
 ) {
@@ -99,8 +100,11 @@ fun BackgroundMediaLayer(
             modifier = Modifier.fillMaxSize().testTag("background_media"),
             onReset = null,
             onRelease = { it.release() },
-            update = { it.render(settings, started, decodeEdge) { message -> latestError(message) } },
+            // Read the live selection inside AndroidView's snapshot observer.
+            // A captured settings value can remain stale while the surrounding
+            // constraints/subcomposition are unchanged after returning from SAF.
+            update = { it.render(settings.value, started, decodeEdge) { message -> latestError(message) } },
         )
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = settings.dimming.coerceIn(0f, 1f))))
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = settings.value.dimming.coerceIn(0f, 1f))))
     }
 }
