@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -105,6 +106,54 @@ private val DeckRed = Color(0xFFA60920)
 private val DeckWhite = Color.White
 private val DeckMuted = Color(0xFFA4A4A4)
 
+private data class RecorderFinish(
+    val plate: List<Color>,
+    val ink: Color,
+    val reel: List<Color>,
+    val reelInk: Color,
+    val hub: List<Color>,
+    val meterFace: Color,
+    val meterInk: Color,
+    val slots: Int = 3,
+)
+
+private val ClassicFinish = RecorderFinish(
+    plate = listOf(Color(0xFFD0D0D0), Color(0xFF969696), Color(0xFFB4B4B4)),
+    ink = Color(0xFF202020),
+    reel = listOf(Color(0xFF414141), Color(0xFF171717), Color(0xFF353535), Color(0xFF111111)),
+    reelInk = Color.White,
+    hub = listOf(Color(0xFFE1E1E1), Color(0xFF777777), Color(0xFF3B3B3B)),
+    meterFace = Color(0xFFE8E8E8), meterInk = Color(0xFF191919),
+)
+private val BlackFinish = RecorderFinish(
+    plate = listOf(DeckBlack, DeckBlack), ink = Color.White,
+    reel = listOf(Color(0xFF9A9A9A), Color(0xFF3B3B3B), Color(0xFF797979), Color(0xFF2C2C2C)),
+    reelInk = Color(0xFF181818),
+    hub = listOf(Color(0xFFB3B3B3), Color(0xFF4A4A4A), Color(0xFF252525)),
+    meterFace = DeckBlack, meterInk = DeckMuted,
+)
+private val RedFinish = RecorderFinish(
+    plate = listOf(Color(0xFF171717), DeckBlack), ink = Color.White,
+    reel = listOf(Color(0xFF494949), Color(0xFF161616), Color(0xFF313131), DeckBlack),
+    reelInk = Color.White,
+    hub = listOf(DeckRed, DeckRed.copy(alpha = .8f), DeckBlack),
+    meterFace = DeckBlack, meterInk = DeckMuted,
+)
+private val StudioFinish = RecorderFinish(
+    plate = listOf(Color(0xFF202020), DeckBlack), ink = Color.White,
+    reel = listOf(Color(0xFFB5B5B5), Color(0xFF555555), Color(0xFF898989), Color(0xFF292929)),
+    reelInk = Color(0xFF191919),
+    hub = listOf(Color(0xFF606060), Color(0xFF242424), DeckBlack),
+    meterFace = DeckBlack, meterInk = DeckMuted, slots = 6,
+)
+
+private fun recorderFinish(design: RecorderDesign): RecorderFinish = when (design) {
+    RecorderDesign.CLASSIC -> ClassicFinish
+    RecorderDesign.BLACK_EDITION -> BlackFinish
+    RecorderDesign.RED_EDITION -> RedFinish
+    RecorderDesign.STUDIO_PRO -> StudioFinish
+}
+
 /** A mechanical deck driven by the real local player and its decoded PCM meters. */
 @Composable
 fun PremiumTapeDeck(
@@ -120,6 +169,7 @@ fun PremiumTapeDeck(
     compact: Boolean = false,
     poweredOverride: Boolean? = null,
     onPoweredChange: ((Boolean) -> Unit)? = null,
+    design: RecorderDesign = RecorderDesign.BLACK_EDITION,
 ) {
     var internalPowered by rememberSaveable { mutableStateOf(true) }
     val powered = poweredOverride ?: internalPowered
@@ -169,7 +219,16 @@ fun PremiumTapeDeck(
             Spacer(Modifier.width(8.dp))
             Text("MdP / REFERENCE 01", color = DeckWhite, fontSize = 11.sp, letterSpacing = 1.7.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
-            Text("STEREO", color = DeckMuted, fontSize = 9.sp, letterSpacing = 1.6.sp)
+            Text(
+                when (design) {
+                    RecorderDesign.CLASSIC -> "AKAI CLASSIC"
+                    RecorderDesign.BLACK_EDITION -> "BLACK EDITION"
+                    RecorderDesign.RED_EDITION -> "RED EDITION"
+                    RecorderDesign.STUDIO_PRO -> "STUDIO PRO"
+                },
+                modifier = Modifier.testTag("deck_design").semantics { stateDescription = design.id; contentDescription = design.label },
+                color = DeckMuted, fontSize = 8.sp, letterSpacing = .8.sp,
+            )
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             // Keep the full flange/head assembly clear of the fixed-height
@@ -178,7 +237,7 @@ fun PremiumTapeDeck(
             Canvas(Modifier.fillMaxWidth().height(deckHeight)) {
                 val unit = size.width / 1_000f
                 scale(unit, unit, pivot = Offset.Zero) {
-                    drawFaceplate(leftRotation, rightRotation, progress, powered)
+                    drawFaceplate(leftRotation, rightRotation, progress, powered, design, size.height / unit)
                 }
             }
             Row(Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
@@ -190,13 +249,13 @@ fun PremiumTapeDeck(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                AnalogMeter(left, if (running) meters.livePeakLeft else 0f, if (running) meters.peakLeft else 0f, "L", "vu_left", Modifier.weight(1f))
-                PowerControl(powered, Modifier.padding(horizontal = 12.dp)) {
+                AnalogMeter(left, if (running) meters.livePeakLeft else 0f, if (running) meters.peakLeft else 0f, "L", "vu_left", Modifier.weight(1f), design)
+                PowerControl(powered, Modifier.padding(horizontal = 12.dp), design) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     if (powered && playback.isPlaying) onTogglePlayback()
                     changePower(!powered)
                 }
-                AnalogMeter(right, if (running) meters.livePeakRight else 0f, if (running) meters.peakRight else 0f, "R", "vu_right", Modifier.weight(1f))
+                AnalogMeter(right, if (running) meters.livePeakRight else 0f, if (running) meters.peakRight else 0f, "R", "vu_right", Modifier.weight(1f), design)
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -239,19 +298,19 @@ fun PremiumTapeDeck(
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val wideControls = maxWidth >= 360.dp
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                DeckKey(Icons.Rounded.SkipPrevious, uiText("Melodia precedentă", "Previous track"), "deck_previous", controlEnabled, onPrevious)
-                if (wideControls) DeckKey(Icons.Rounded.Replay10, uiText("Înapoi 10 secunde", "Rewind 10 seconds"), "deck_rewind", controlEnabled, { onSeek((playback.positionMs - 10_000L).coerceAtLeast(0L)) })
+                DeckKey(Icons.Rounded.SkipPrevious, uiText("Melodia precedentă", "Previous track"), "deck_previous", controlEnabled, onPrevious, design = design)
+                if (wideControls) DeckKey(Icons.Rounded.Replay10, uiText("Înapoi 10 secunde", "Rewind 10 seconds"), "deck_rewind", controlEnabled, { onSeek((playback.positionMs - 10_000L).coerceAtLeast(0L)) }, design = design)
                 DeckKey(
                     if (playback.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     if (playback.isPlaying) uiText("Pauză", "Pause") else uiText("Redare", "Play"),
-                    "deck_play", controlEnabled, onTogglePlayback, primary = true,
+                    "deck_play", controlEnabled, onTogglePlayback, primary = true, design = design,
                 )
-                if (wideControls) DeckKey(Icons.Rounded.Forward10, uiText("Înainte 10 secunde", "Forward 10 seconds"), "deck_forward", controlEnabled, { onSeek((playback.positionMs + 10_000L).coerceAtMost(playback.durationMs.coerceAtLeast(0L))) })
-                DeckKey(Icons.Rounded.SkipNext, uiText("Melodia următoare", "Next track"), "deck_next", controlEnabled, onNext)
+                if (wideControls) DeckKey(Icons.Rounded.Forward10, uiText("Înainte 10 secunde", "Forward 10 seconds"), "deck_forward", controlEnabled, { onSeek((playback.positionMs + 10_000L).coerceAtMost(playback.durationMs.coerceAtLeast(0L))) }, design = design)
+                DeckKey(Icons.Rounded.SkipNext, uiText("Melodia următoare", "Next track"), "deck_next", controlEnabled, onNext, design = design)
                 DeckKey(Icons.Rounded.Stop, uiText("Oprire", "Stop"), "deck_stop", controlEnabled, {
                     if (playback.isPlaying) onTogglePlayback()
                     onSeek(0L)
-                })
+                }, design = design)
             }
         }
         val volumeDescription = uiText("Volum", "Volume")
@@ -272,7 +331,7 @@ fun PremiumTapeDeck(
 @Composable
 private fun ReelSemantics(angle: Float, running: Boolean, tag: String, description: String, modifier: Modifier = Modifier) {
     Box(modifier.aspectRatio(1f).testTag(tag).semantics {
-        contentDescription = description
+        contentDescription = "AKAI $description"
         stateDescription = "angle=${(angle % 360f + 360f) % 360f};running=$running"
     })
 }
@@ -292,7 +351,7 @@ private fun TimeLabel(milliseconds: Long) {
 }
 
 @Composable
-private fun DeckKey(icon: ImageVector, description: String, tag: String, enabled: Boolean, onClick: () -> Unit, primary: Boolean = false) {
+private fun DeckKey(icon: ImageVector, description: String, tag: String, enabled: Boolean, onClick: () -> Unit, primary: Boolean = false, design: RecorderDesign = RecorderDesign.BLACK_EDITION) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val depth by animateFloatAsState(if (pressed) 1.5f else 0f, tween(90), label = "transport key depth")
@@ -304,22 +363,24 @@ private fun DeckKey(icon: ImageVector, description: String, tag: String, enabled
             .graphicsLayer { translationY = depth.dp.toPx(); scaleX = if (pressed) .96f else 1f; scaleY = scaleX }
             .drawBehind {
                 val inset = if (primary) 2.dp.toPx() else 3.dp.toPx()
+                val keyRadius = (if (design == RecorderDesign.STUDIO_PRO) 4.dp else 11.dp).toPx()
+                val neutralKey = if (design == RecorderDesign.CLASSIC) listOf(Color(0xFFC8C8C8), Color(0xFF777777)) else listOf(Color.White.copy(alpha = .09f), DeckBlack)
                 drawRoundRect(
-                    Brush.verticalGradient(if (primary) listOf(DeckRed, DeckRed.copy(alpha = .65f)) else listOf(Color.White.copy(alpha = .09f), DeckBlack)),
-                    topLeft = Offset(inset, inset), size = Size(size.width - inset * 2, size.height - inset * 2), cornerRadius = CornerRadius(11.dp.toPx()),
+                    Brush.verticalGradient(if (primary) listOf(DeckRed, DeckRed.copy(alpha = .65f)) else neutralKey),
+                    topLeft = Offset(inset, inset), size = Size(size.width - inset * 2, size.height - inset * 2), cornerRadius = CornerRadius(keyRadius),
                 )
                 drawRoundRect(
-                    if (primary) DeckRed.copy(alpha = .9f) else Color.White.copy(alpha = .16f),
-                    topLeft = Offset(inset, inset), size = Size(size.width - inset * 2, size.height - inset * 2), cornerRadius = CornerRadius(11.dp.toPx()), style = Stroke(1.dp.toPx()),
+                    if (primary || design == RecorderDesign.RED_EDITION) DeckRed.copy(alpha = .9f) else Color.White.copy(alpha = .25f),
+                    topLeft = Offset(inset, inset), size = Size(size.width - inset * 2, size.height - inset * 2), cornerRadius = CornerRadius(keyRadius), style = Stroke(1.dp.toPx()),
                 )
             },
     ) {
-        Icon(icon, description, tint = DeckWhite.copy(alpha = if (enabled) 1f else .25f), modifier = Modifier.size(if (primary) 30.dp else 22.dp))
+        Icon(icon, description, tint = (if (design == RecorderDesign.CLASSIC && !primary) DeckBlack else DeckWhite).copy(alpha = if (enabled) 1f else .25f), modifier = Modifier.size(if (primary) 30.dp else 22.dp))
     }
 }
 
 @Composable
-private fun PowerControl(powered: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun PowerControl(powered: Boolean, modifier: Modifier = Modifier, design: RecorderDesign = RecorderDesign.BLACK_EDITION, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val depth by animateFloatAsState(if (pressed) .94f else 1f, tween(100), label = "power press")
@@ -344,7 +405,7 @@ private fun PowerControl(powered: Boolean, modifier: Modifier = Modifier, onClic
             val radius = size.minDimension / 2
             if (powered) drawCircle(Brush.radialGradient(listOf(DeckRed.copy(alpha = .30f * pulse), DeckRed.copy(alpha = .10f), Color.Transparent)), radius)
             drawCircle(Color.White.copy(alpha = .12f), radius * .79f)
-            drawCircle(Brush.radialGradient(listOf(Color(0xFF252525), DeckBlack)), radius * .76f)
+            drawCircle(Brush.radialGradient(if (design == RecorderDesign.CLASSIC) listOf(Color(0xFFCFCFCF), Color(0xFF555555)) else listOf(Color(0xFF252525), DeckBlack)), radius * .76f)
             drawCircle(if (powered) DeckRed.copy(alpha = .5f) else Color.White.copy(alpha = .18f), radius * .72f, style = Stroke(2.dp.toPx()))
             if (powered) {
                 val diameter = radius * 1.44f
@@ -361,46 +422,56 @@ private fun PowerControl(powered: Boolean, modifier: Modifier = Modifier, onClic
 }
 
 @Composable
-private fun AnalogMeter(level: Float, livePeak: Float, peak: Float, channel: String, tag: String, modifier: Modifier = Modifier) {
+private fun AnalogMeter(level: Float, livePeak: Float, peak: Float, channel: String, tag: String, modifier: Modifier = Modifier, design: RecorderDesign = RecorderDesign.BLACK_EDITION) {
     val description = uiText("Nivel audio canal $channel", "Audio level channel $channel")
+    val finish = recorderFinish(design)
+    val studio = design == RecorderDesign.STUDIO_PRO
     Column(modifier) {
-        Canvas(Modifier.fillMaxWidth().height(52.dp).testTag(tag).semantics {
+        if (studio) SegmentedMeter(livePeak, peak, channel, Modifier.fillMaxWidth().padding(bottom = 3.dp), studio = true)
+        Canvas(Modifier.fillMaxWidth().height(if (studio) 45.dp else 52.dp).testTag(tag).semantics {
             contentDescription = description
             progressBarRangeInfo = ProgressBarRangeInfo(level.coerceIn(0f, 1f), 0f..1f)
             stateDescription = "peak=${peak.coerceIn(0f, 1f)}"
         }) {
             val inset = 1.dp.toPx()
-            drawRoundRect(Color.White.copy(alpha = .11f), cornerRadius = CornerRadius(5.dp.toPx()))
-            drawRoundRect(DeckBlack, Offset(inset, inset), Size(size.width - inset * 2, size.height - inset * 2), CornerRadius(4.dp.toPx()))
+            val frameColor = when (design) {
+                RecorderDesign.CLASSIC -> Color(0xFF444444)
+                RecorderDesign.RED_EDITION -> DeckRed.copy(alpha = .75f)
+                RecorderDesign.STUDIO_PRO -> Color.White.copy(alpha = .28f)
+                RecorderDesign.BLACK_EDITION -> Color.White.copy(alpha = .11f)
+            }
+            val corners = if (studio) 2.dp.toPx() else 5.dp.toPx()
+            drawRoundRect(frameColor, cornerRadius = CornerRadius(corners))
+            drawRoundRect(finish.meterFace, Offset(inset, inset), Size(size.width - inset * 2, size.height - inset * 2), CornerRadius((corners - inset).coerceAtLeast(0f)))
             val pivot = Offset(size.width * .5f, size.height * .87f)
             val radius = minOf(size.height * .75f, size.width * .43f)
             for (step in 0..20) {
                 val angle = -145f + step * 5.5f
                 val outer = radial(pivot, radius, angle)
                 val inner = radial(pivot, radius * if (step % 5 == 0) .81f else .9f, angle)
-                drawLine(if (step >= 16) DeckRed else DeckMuted.copy(alpha = .8f), inner, outer, if (step % 5 == 0) 1.5.dp.toPx() else .7.dp.toPx())
+                drawLine(if (step >= 16) DeckRed else finish.meterInk.copy(alpha = .8f), inner, outer, if (step % 5 == 0) 1.5.dp.toPx() else .7.dp.toPx())
             }
             val needleAngle = -145f + level.coerceIn(0f, 1f) * 110f
             drawLine(DeckRed, pivot + Offset(1.dp.toPx(), 1.dp.toPx()), radial(pivot, radius * .85f, needleAngle) + Offset(1.dp.toPx(), 1.dp.toPx()), 2.dp.toPx(), StrokeCap.Round)
-            drawCircle(DeckMuted, 2.dp.toPx(), pivot)
+            drawCircle(finish.meterInk, 2.dp.toPx(), pivot)
             drawCircle(DeckBlack, 1.dp.toPx(), pivot)
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.LTGRAY; textSize = 7.sp.toPx(); typeface = Typeface.MONOSPACE }
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = finish.meterInk.toArgb(); textSize = 7.sp.toPx(); typeface = Typeface.MONOSPACE }
             drawContext.canvas.nativeCanvas.drawText("−60    −20    0", size.width * .12f, size.height * .25f, paint)
             paint.textSize = 6.sp.toPx()
             drawContext.canvas.nativeCanvas.drawText("VU $channel / dBFS", 7.dp.toPx(), size.height - 6.dp.toPx(), paint)
         }
-        SegmentedMeter(livePeak, peak, channel, Modifier.fillMaxWidth().padding(top = 3.dp))
+        if (!studio) SegmentedMeter(livePeak, peak, channel, Modifier.fillMaxWidth().padding(top = 3.dp))
     }
 }
 
 /** These signal LEDs are the sole green/yellow accents on the black and red deck. */
 @Composable
-private fun SegmentedMeter(level: Float, peak: Float, channel: String, modifier: Modifier = Modifier) {
+private fun SegmentedMeter(level: Float, peak: Float, channel: String, modifier: Modifier = Modifier, studio: Boolean = false) {
     val description = uiText("Indicator LED audio $channel", "$channel audio LED meter")
     val actualLevel = level.coerceIn(0f, 1f)
     val actualPeak = peak.coerceIn(0f, 1f)
     val tag = if (channel == "L") "led_left" else "led_right"
-    Canvas(modifier.height(19.dp).testTag(tag).semantics {
+    Canvas(modifier.height(if (studio) 26.dp else 19.dp).testTag(tag).semantics {
         contentDescription = description
         progressBarRangeInfo = ProgressBarRangeInfo(actualLevel, 0f..1f)
         stateDescription = "peak=$actualPeak"
@@ -409,7 +480,7 @@ private fun SegmentedMeter(level: Float, peak: Float, channel: String, modifier:
         val inset = 4.dp.toPx()
         val gap = 1.5.dp.toPx()
         val width = ((size.width - inset * 2 - gap * (count - 1)) / count).coerceAtLeast(1f)
-        val height = 7.dp.toPx()
+        val height = (if (studio) 11.dp else 7.dp).toPx()
         val top = (size.height - height) / 2
         drawRoundRect(Color.White.copy(alpha = .10f), cornerRadius = CornerRadius(3.dp.toPx()))
         drawRoundRect(DeckBlack, Offset(1f, 1f), Size(size.width - 2f, size.height - 2f), CornerRadius(3.dp.toPx()))
@@ -439,45 +510,125 @@ private fun SegmentedMeter(level: Float, peak: Float, channel: String, modifier:
     }
 }
 
-private fun DrawScope.drawFaceplate(leftAngle: Float, rightAngle: Float, progress: Float, powered: Boolean) {
-    // A back-wound take-up routes over the outer right guide, so its opposite
-    // rotation feeds the same left-to-right tape path without a crossed ribbon.
-    drawLine(Color.White.copy(alpha = .04f), Offset(12f, 468f), Offset(988f, 468f), 1f)
+private fun DrawScope.drawFaceplate(
+    leftAngle: Float,
+    rightAngle: Float,
+    progress: Float,
+    powered: Boolean,
+    design: RecorderDesign,
+    chassisHeight: Float,
+) {
+    val finish = recorderFinish(design)
+    val classic = design == RecorderDesign.CLASSIC
+    val studio = design == RecorderDesign.STUDIO_PRO
+    val red = design == RecorderDesign.RED_EDITION
+    val plateRadius = if (studio) 5f else 15f
+    drawRoundRect(Brush.verticalGradient(finish.plate, 0f, chassisHeight), size = Size(1_000f, chassisHeight), cornerRadius = CornerRadius(plateRadius))
+    drawRoundRect(finish.ink.copy(alpha = if (classic) .35f else .14f), Offset(1f, 1f), Size(998f, chassisHeight - 2f), CornerRadius(plateRadius), style = Stroke(2f))
+    if (classic) {
+        // Fine horizontal grain is etched into a neutral silver faceplate.
+        var y = 8f
+        while (y < chassisHeight - 8f) {
+            drawLine(Color.Black.copy(alpha = .045f), Offset(8f, y), Offset(992f, y), .6f)
+            drawLine(Color.White.copy(alpha = .11f), Offset(8f, y + 1.2f), Offset(992f, y + 1.2f), .5f)
+            y += 6f
+        }
+        drawLine(Color.White.copy(alpha = .7f), Offset(12f, 5f), Offset(988f, 5f), 2f)
+    } else if (red) {
+        drawRoundRect(DeckRed, Offset(5f, 7f), Size(9f, chassisHeight - 14f), CornerRadius(3f))
+        drawRoundRect(DeckRed, Offset(986f, 7f), Size(9f, chassisHeight - 14f), CornerRadius(3f))
+        drawLine(DeckRed.copy(alpha = .7f), Offset(25f, 465f), Offset(975f, 465f), 3f)
+    } else if (studio) {
+        drawLine(Color.White.copy(alpha = .18f), Offset(22f, 14f), Offset(978f, 14f), 1f)
+        for (index in 0..32) {
+            val x = 48f + index * 28f
+            drawLine(Color.White.copy(alpha = .16f), Offset(x, 457f), Offset(x, if (index % 4 == 0) 465f else 461f), 1f)
+        }
+    } else {
+        drawLine(Color.White.copy(alpha = .06f), Offset(12f, 468f), Offset(988f, 468f), 1f)
+        drawRoundRect(Color.White.copy(alpha = .07f), Offset(23f, 27f), Size(954f, 405f), CornerRadius(10f), style = Stroke(1f))
+    }
+    // Matching lower guide tangents feed both reels clockwise. The tape enters
+    // the lower-left take-up tangent, with no crossed or back-wound ribbon.
     val tape = Path().apply {
         moveTo(414f, 310f); lineTo(354f, 424f); lineTo(409f, 443f)
-        lineTo(591f, 443f); lineTo(808f, 443f); lineTo(848f, 425f); lineTo(920f, 310f)
+        lineTo(591f, 443f); lineTo(646f, 424f); lineTo(600f, 310f)
     }
     drawPath(tape, Color(0xFF353535), style = Stroke(9f))
     drawPath(tape, Color.White.copy(alpha = .24f), style = Stroke(1f))
-    drawReel(Offset(247f, 215f), 202f, .84f - progress * .35f, leftAngle)
-    drawReel(Offset(753f, 215f), 202f, .49f + progress * .35f, rightAngle)
-    for (x in listOf(354f, 828f)) {
+    drawReel(Offset(247f, 215f), 202f, .84f - progress * .35f, leftAngle, design)
+    drawReel(Offset(753f, 215f), 202f, .49f + progress * .35f, rightAngle, design)
+    drawRecorderLettering(finish.ink, design)
+    for (x in listOf(354f, 646f)) {
         drawCircle(Color.Black, 28f, Offset(x, 424f))
-        drawCircle(Brush.radialGradient(listOf(Color(0xFFABABAB), Color(0xFF2A2A2A)), Offset(x - 8, 416f), 32f), 23f, Offset(x, 422f))
+        drawCircle(Brush.radialGradient(listOf(Color(0xFFCBCBCB), Color(0xFF2A2A2A)), Offset(x - 8, 416f), 32f), 23f, Offset(x, 422f))
         drawCircle(DeckBlack, 12f, Offset(x, 422f))
-        drawCircle(Color.White.copy(alpha = .45f), 4f, Offset(x, 422f))
+        drawCircle(if (red) DeckRed else Color.White.copy(alpha = .45f), 4f, Offset(x, 422f))
     }
-    drawRoundRect(Color.Black, Offset(414f, 376f), Size(172f, 85f), CornerRadius(8f))
-    drawRoundRect(Brush.verticalGradient(listOf(Color(0xFF373737), DeckBlack), 376f, 453f), Offset(422f, 376f), Size(156f, 76f), CornerRadius(6f))
-    drawRoundRect(Color.White.copy(alpha = .20f), Offset(422f, 376f), Size(156f, 76f), CornerRadius(6f), style = Stroke(1f))
-    drawRect(DeckRed.copy(alpha = if (powered) 1f else .3f), Offset(433f, 387f), Size(134f, 4f))
-    drawLine(Color.White.copy(alpha = .3f), Offset(454f, 401f), Offset(546f, 401f), 2f)
-    drawLine(Color.White.copy(alpha = .13f), Offset(454f, 408f), Offset(546f, 408f), 2f)
-    drawLine(Color.White.copy(alpha = .13f), Offset(454f, 415f), Offset(546f, 415f), 2f)
-    for (x in listOf(435f, 565f)) screw(Offset(x, 436f), 4f)
-    for (point in listOf(Offset(12f, 25f), Offset(988f, 25f), Offset(12f, 452f), Offset(988f, 452f))) screw(point, 5f)
+    val headTop = if (studio) 389f else 376f
+    val headHeight = if (studio) 61f else 76f
+    val headColors = when (design) {
+        RecorderDesign.CLASSIC -> listOf(Color(0xFFD9D9D9), Color(0xFF777777), Color(0xFFBBBBBB))
+        RecorderDesign.RED_EDITION -> listOf(Color(0xFF242424), DeckBlack)
+        RecorderDesign.STUDIO_PRO -> listOf(Color(0xFF343434), Color(0xFF151515))
+        RecorderDesign.BLACK_EDITION -> listOf(Color(0xFF373737), DeckBlack)
+    }
+    drawRoundRect(Color.Black, Offset(414f, headTop), Size(172f, headHeight + 9f), CornerRadius(if (studio) 2f else 8f))
+    drawRoundRect(Brush.verticalGradient(headColors, headTop, headTop + headHeight), Offset(422f, headTop), Size(156f, headHeight), CornerRadius(if (studio) 1f else 6f))
+    drawRoundRect(if (red) DeckRed else finish.ink.copy(alpha = .3f), Offset(422f, headTop), Size(156f, headHeight), CornerRadius(if (studio) 1f else 6f), style = Stroke(if (red) 3f else 1f))
+    drawRect(DeckRed.copy(alpha = if (powered) 1f else .3f), Offset(433f, headTop + 10f), Size(134f, if (red) 6f else 3f))
+    for (slot in 0..2) {
+        val y = headTop + 25f + slot * 7f
+        drawLine(finish.ink.copy(alpha = if (classic) .55f else .25f), Offset(454f, y), Offset(546f, y), 2f)
+    }
+    for (x in listOf(435f, 565f)) screw(Offset(x, headTop + headHeight - 13f), 4f)
+    for (point in listOf(Offset(23f, 25f), Offset(977f, 25f), Offset(23f, 452f), Offset(977f, 452f))) screw(point, 5f)
 }
 
-private fun DrawScope.drawReel(center: Offset, radius: Float, tapeRadius: Float, angle: Float) {
+private fun DrawScope.drawRecorderLettering(ink: Color, design: RecorderDesign) {
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        textAlign = Paint.Align.CENTER
+        textSize = if (design == RecorderDesign.STUDIO_PRO) 38f else 43f
+        color = if (design == RecorderDesign.CLASSIC) Color.White.copy(alpha = .5f).toArgb() else Color.Black.toArgb()
+    }
+    drawContext.canvas.nativeCanvas.drawText("AKAI", 500f, 155f, paint)
+    paint.color = ink.toArgb()
+    drawContext.canvas.nativeCanvas.drawText("AKAI", 500f, 153.5f, paint)
+    paint.typeface = Typeface.MONOSPACE
+    paint.textSize = 9.5f
+    drawContext.canvas.nativeCanvas.drawText("MdP RemiX 1&1", 500f, 176f, paint)
+    paint.textSize = 8f
+    paint.color = ink.copy(alpha = .65f).toArgb()
+    val model = when (design) {
+        RecorderDesign.CLASSIC -> "CLASSIC / STEREO"
+        RecorderDesign.BLACK_EDITION -> "BLACK / STEREO"
+        RecorderDesign.RED_EDITION -> "RED / STEREO"
+        RecorderDesign.STUDIO_PRO -> "STUDIO / MONITOR"
+    }
+    drawContext.canvas.nativeCanvas.drawText(model, 500f, 195f, paint)
+}
+
+private fun DrawScope.drawReel(center: Offset, radius: Float, tapeRadius: Float, angle: Float, design: RecorderDesign) {
+    val finish = recorderFinish(design)
+    val red = design == RecorderDesign.RED_EDITION
+    val studio = design == RecorderDesign.STUDIO_PRO
     drawCircle(Color.Black.copy(alpha = .9f), radius + 7f, center + Offset(0f, 10f))
     drawCircle(Brush.radialGradient(listOf(Color(0xFF323232), DeckBlack), center, radius), radius, center)
+    // The entire physical flange, its screws and AKAI printing share one
+    // positive clockwise transform. No mirroring or stationary reel lettering.
     rotate(angle, center) {
-        drawCircle(Brush.radialGradient(listOf(Color(0xFF9A9A9A), Color(0xFF3B3B3B), Color(0xFF797979), Color(0xFF2C2C2C)), center - Offset(radius * .2f, radius * .25f), radius * 1.5f), radius, center)
-        drawCircle(Color.White.copy(alpha = .45f), radius - 3f, center, style = Stroke(2f))
+        drawCircle(Brush.radialGradient(finish.reel, center - Offset(radius * .2f, radius * .25f), radius * 1.5f), radius, center)
+        drawCircle(if (red) DeckRed else Color.White.copy(alpha = .45f), radius - 3f, center, style = Stroke(if (red) 6f else 2f))
         drawCircle(Color.Black.copy(alpha = .45f), radius - 10f, center, style = Stroke(2f))
-        for (spoke in 0..2) {
-            rotate(spoke * 120f, center) {
-                fun point(r: Float, degrees: Float) = radial(center, radius * r, degrees)
+        if (studio) {
+            drawCircle(Color.White.copy(alpha = .35f), radius * .92f, center, style = Stroke(1f))
+            drawCircle(Color.Black.copy(alpha = .4f), radius * .89f, center, style = Stroke(1f))
+        }
+        val apertureScale = 3f / finish.slots
+        for (spoke in 0 until finish.slots) {
+            rotate(spoke * 360f / finish.slots, center) {
+                fun point(r: Float, degrees: Float) = radial(center, radius * r, degrees * apertureScale)
                 val a = point(.36f, 19f)
                 val hole = Path().apply {
                     moveTo(a.x, a.y)
@@ -497,18 +648,30 @@ private fun DrawScope.drawReel(center: Offset, radius: Float, tapeRadius: Float,
                     }
                 }
                 drawPath(hole, Color.Black.copy(alpha = .85f), style = Stroke(4f))
-                drawPath(hole, Color.White.copy(alpha = .20f), style = Stroke(1.1f))
+                drawPath(hole, if (red) DeckRed.copy(alpha = .6f) else Color.White.copy(alpha = .20f), style = Stroke(if (red) 2f else 1.1f))
                 screw(point(.28f, 117f), 4.5f)
             }
         }
-        drawCircle(Brush.radialGradient(listOf(Color(0xFFB3B3B3), Color(0xFF4A4A4A), Color(0xFF252525)), center - Offset(6f, 6f), radius * .26f), radius * .24f, center)
-        drawCircle(Color.White.copy(alpha = .45f), radius * .24f, center, style = Stroke(1f))
+        drawCircle(Brush.radialGradient(finish.hub, center - Offset(6f, 6f), radius * .26f), radius * .24f, center)
+        drawCircle(if (red) DeckRed else Color.White.copy(alpha = .45f), radius * .24f, center, style = Stroke(if (red) 3f else 1f))
         drawCircle(DeckBlack, radius * .115f, center)
         drawCircle(Color(0xFF898989), radius * .057f, center)
         drawLine(DeckBlack, center - Offset(radius * .035f, 0f), center + Offset(radius * .035f, 0f), 3f)
+        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = finish.reelInk.toArgb()
+            typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+            textSize = radius * if (studio) .105f else .15f
+        }
+        val labelCenter = center + Offset(radius * .57f, radius * if (studio) .012f else .035f)
+        drawContext.canvas.nativeCanvas.drawText("AKAI", labelCenter.x, labelCenter.y, brandPaint)
+        brandPaint.typeface = Typeface.MONOSPACE
+        brandPaint.textSize = radius * if (studio) .043f else .055f
+        brandPaint.color = finish.reelInk.copy(alpha = .75f).toArgb()
+        if (!studio) drawContext.canvas.nativeCanvas.drawText("MdP", labelCenter.x, center.y + radius * .12f, brandPaint)
     }
-    // A stationary highlight gives the spinning metal a physical light source.
-    drawArc(Color.White.copy(alpha = .28f), 218f, 83f, false, center - Offset(radius, radius), Size(radius * 2, radius * 2), style = Stroke(3f))
+    // A fixed light source reflects from the moving rim, not the printed label.
+    drawArc(Color.White.copy(alpha = if (design == RecorderDesign.CLASSIC) .4f else .28f), 218f, 83f, false, center - Offset(radius, radius), Size(radius * 2, radius * 2), style = Stroke(3f))
 }
 
 private fun DrawScope.screw(center: Offset, radius: Float) {

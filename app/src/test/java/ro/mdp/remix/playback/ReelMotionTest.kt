@@ -22,7 +22,7 @@ class ReelMotionTest {
         assertEquals(0L, initial.elapsedPlayingNanos)
     }
 
-    @Test fun actualPlaybackDrivesBothReelsInOppositeDirections() {
+    @Test fun actualPlaybackDrivesBothReelsClockwiseFromOneSynchronizedPhase() {
         val clock = Clock()
         val motion = ReelMotionState(clock::read)
         motion.setPlaying(true)
@@ -31,9 +31,10 @@ class ReelMotionTest {
         assertTrue(frame.isPlaying)
         assertEquals(1_000_000_000L, frame.elapsedPlayingNanos)
         assertEquals(48f, frame.leftDegrees, 0.0001f)
-        assertEquals(-52.941177f, frame.rightDegrees, 0.0001f)
+        assertEquals(48f, frame.rightDegrees, 0.0001f)
         assertTrue(frame.leftDegrees > 0f)
-        assertTrue(frame.rightDegrees < 0f)
+        assertTrue(frame.rightDegrees > 0f)
+        assertEquals(frame.leftDegrees, frame.rightDegrees, 0f)
     }
 
     @Test fun pauseFreezesImmediatelyAndResumeContinuesTheSamePhase() {
@@ -85,7 +86,7 @@ class ReelMotionTest {
         val frame = motion.sample()
         assertEquals(61_000_000_000L, frame.elapsedPlayingNanos)
         assertEquals(48f, frame.leftDegrees, 0.0001f)
-        assertEquals(-349.41177f, frame.rightDegrees, 0.0001f)
+        assertEquals(48f, frame.rightDegrees, 0.0001f)
     }
 
     @Test fun resetExplicitlyClearsBothPhasesAndStopsTheClock() {
@@ -156,18 +157,24 @@ class ReelMotionTest {
         assertEquals(backgroundOnly.sample(), frequentlySampled.sample())
     }
 
-    @Test fun phasesWrapIndependentlyAtTheirMechanicalPeriods() {
+    @Test fun bothClockwiseReelsWrapTogetherWithoutDrift() {
         val clock = Clock()
         val motion = ReelMotionState(clock::read)
         motion.setPlaying(true)
         clock.advance(6_800)
-        val rightWrapped = motion.sample()
-        assertEquals(0f, rightWrapped.rightDegrees, 0f)
-        assertEquals(326.4f, rightWrapped.leftDegrees, 0.0001f)
+        val beforeWrap = motion.sample()
+        assertEquals(326.4f, beforeWrap.leftDegrees, 0.0001f)
+        assertEquals(beforeWrap.leftDegrees, beforeWrap.rightDegrees, 0f)
         clock.advance(700)
-        val leftWrapped = motion.sample()
-        assertEquals(0f, leftWrapped.leftDegrees, 0f)
-        assertEquals(-37.058823f, leftWrapped.rightDegrees, 0.0001f)
+        val wrapped = motion.sample()
+        assertEquals(0f, wrapped.leftDegrees, 0f)
+        assertEquals(0f, wrapped.rightDegrees, 0f)
+        repeat(10_000) {
+            clock.advance(17)
+            val frame = motion.sample()
+            assertEquals(frame.leftDegrees, frame.rightDegrees, 0f)
+            assertTrue(frame.leftDegrees in 0f..360f)
+        }
     }
 
     @Test fun activityVersionChangesEvenWhenRapidPauseResumeReturnsToSameBoolean() {

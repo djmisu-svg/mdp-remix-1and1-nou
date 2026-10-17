@@ -187,7 +187,7 @@ class PremiumUiTest {
         compose.mainClock.autoAdvance = false
         try {
             startWave(controller, audioFile, repeat = true)
-            awaitOppositeReelMotion(controller)
+            awaitClockwiseReelMotion(controller)
             assertVisibleReelMotion()
 
             val beforeBackground = ReelMotion.snapshot()
@@ -196,7 +196,7 @@ class PremiumUiTest {
             val inBackground = ReelMotion.snapshot()
             assertTrue("Foreground audio must keep the reel clock running without a composed screen", inBackground.isPlaying)
             assertTrue("The left reel must keep turning in the background", angleDelta(beforeBackground.leftDegrees, inBackground.leftDegrees) > 3f)
-            assertTrue("The right reel must keep turning in the opposite direction", angleDelta(beforeBackground.rightDegrees, inBackground.rightDegrees) < -3f)
+            assertTrue("The right reel must keep turning clockwise in the background", angleDelta(beforeBackground.rightDegrees, inBackground.rightDegrees) > 3f)
             compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
 
             instrumentation.runOnMainSync { controller.pause() }
@@ -221,7 +221,7 @@ class PremiumUiTest {
             assertFrozenReels("after navigation and recreation")
 
             instrumentation.runOnMainSync { controller.play() }
-            awaitOppositeReelMotion(controller)
+            awaitClockwiseReelMotion(controller)
             assertVisibleReelMotion()
             instrumentation.runOnMainSync { controller.stop() }
             awaitCondition("Stop must freeze both reels", { playbackDiagnostics(controller) }) { !ReelMotion.snapshot().isPlaying }
@@ -230,7 +230,7 @@ class PremiumUiTest {
             assertUiReelAngles(stopped.leftDegrees, stopped.rightDegrees)
 
             startWave(controller, audioFile, repeat = false)
-            awaitOppositeReelMotion(controller)
+            awaitClockwiseReelMotion(controller)
             instrumentation.runOnMainSync { controller.seekTo(3_650) }
             awaitCondition("The real WAV must reach end of queue", { playbackDiagnostics(controller) }) {
                 var ended = false
@@ -304,13 +304,13 @@ class PremiumUiTest {
         return matches
     }
 
-    private fun awaitOppositeReelMotion(controller: MediaController) {
+    private fun awaitClockwiseReelMotion(controller: MediaController) {
         awaitCondition("Actual playback must start the reel clock", { playbackDiagnostics(controller) }) { ReelMotion.snapshot().isPlaying }
         val before = ReelMotion.snapshot()
-        awaitCondition("Real playback must turn the reels in opposite directions", { playbackDiagnostics(controller) }) {
+        awaitCondition("Real playback must turn both reels clockwise", { playbackDiagnostics(controller) }) {
             val after = ReelMotion.snapshot()
             after.isPlaying && angleDelta(before.leftDegrees, after.leftDegrees) > 3f &&
-                angleDelta(before.rightDegrees, after.rightDegrees) < -3f
+                angleDelta(before.rightDegrees, after.rightDegrees) > 3f
         }
     }
 
@@ -339,7 +339,8 @@ class PremiumUiTest {
                 .substringAfter("angle=").substringBefore(';').toFloat()
         }
         assertTrue("Visible left reel must change its rendered angle while playing", angleDelta(before[0], after[0]) > 3f)
-        assertTrue("Visible right reel must change its angle in the opposite direction", angleDelta(before[1], after[1]) < -3f)
+        assertTrue("Visible right reel must change its rendered angle clockwise", angleDelta(before[1], after[1]) > 3f)
+        assertTrue("Both visible clockwise reels must share the same phase", abs(angleDelta(after[0], after[1])) < 0.5f)
     }
 
     private fun assertUiReelAngles(left: Float, right: Float) {

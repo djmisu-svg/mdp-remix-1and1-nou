@@ -1,10 +1,10 @@
-# Premium black / red interface
+# Premium AKAI recorder interfaces
 
-PR #2 now includes the complete Studio, YouTube library, and Preferences redesign, with an interactive reel-to-reel deck and real PCM-driven VU meters. See [premium features and verification](docs/PREMIUM_UI.md). Download the isolated **MdP-RemiX-premiumtest** artifact from the latest successful PR build; the original application and its data stay separate.
+PR #2 now includes the complete Studio, YouTube library, and Preferences redesign, with four persistently selectable AKAI recorder designs, synchronized clockwise reels, attached reel lettering, a complete MDP launcher icon and real PCM-driven stereo peak/VU meters. See [premium features and verification](docs/PREMIUM_UI.md). Download the isolated **MdP-RemiX-premiumtest** artifact from the latest successful PR build; the original application and its data stay separate.
 
 # MdP RemiX 1&1
 
-Native Android music player and YouTube playlist-link manager, written in Kotlin with Jetpack Compose and AndroidX Media3. Black, gold and charcoal interface with Romanian labels; responsive layouts for phones and tablets. Android 6.0/API 23 or later.
+Native Android music player and YouTube playlist-link manager, written in Kotlin with Jetpack Compose and AndroidX Media3. Matte black #09090B and blood red #A60920 interface with Romanian/English selection and a silver AKAI Classic recorder option; responsive layouts for phones and tablets. Android 6.0/API 23 or later.
 
 ## Features
 
@@ -18,20 +18,20 @@ Playlists managed here are local collections of saved links; renaming or arrangi
 
 ## Download the APK
 
-After the project has been uploaded to `djmisu-svg/mdp-remix-1and1-nou`:
+For branch `feature/premium-settings-share-updates`:
 
-1. Open [GitHub Actions — Android Debug APK](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions/workflows/build.yml).
-2. Choose the successful green run for your uploaded commit.
-3. Under **Artifacts**, download **MdP-RemiX-debug** while signed into GitHub.
-4. Extract the ZIP and install **MdP-RemiX.apk** on your Android device. Allow installation from the browser/file manager if Android asks.
+1. Open [GitHub Actions — Android Premium Test APK](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions/workflows/build.yml).
+2. Choose the successful green run for the latest branch commit.
+3. Under **Artifacts**, download **MdP-RemiX-premiumtest** while signed into GitHub.
+4. Extract the ZIP and install **MdP-RemiX-Premium-Test.apk** on your Android device. Allow installation from the browser/file manager if Android asks.
 
-The workflow runs on push, pull request and manual dispatch. It sets up JDK 17, installs an explicit list of current SDK packages, validates the Gradle wrapper, runs JVM tests and Android lint, builds a signed Debug APK, verifies its signature and uploads the APK with a SHA-256 checksum. Artifacts are retained for 30 days. Test/lint reports are uploaded separately. No secrets or manual code edits are needed.
+The workflow runs on push, pull request and manual dispatch. It sets up JDK 17, installs an explicit list of current SDK packages, validates the Gradle wrapper, runs JVM tests and Android lint, builds Debug and debug-derived Premium Test APKs, verifies their signatures and distinct package IDs and uploads the APK with a SHA-256 checksum. Artifacts are retained for 30 days. Test/lint reports are uploaded separately. No secrets or manual code edits are needed.
 
 ## Use the app
 
-Start in **YouTube & linkuri**. Add a video or playlist URL with a name, then organize it into local playlists. Playlist actions allow renaming, favorites, ordering and deletion. Entry actions allow title changes, favorites, collection membership and deletion. **Recente** shows successfully handed-off links and opened collections; it does not claim that a video finished playing in YouTube.
+Start in **Studio**. Use the recorder design selector to choose AKAI Classic, AKAI Black Edition, AKAI Red Edition or AKAI Studio Pro; the selection is saved for future launches. Switch to the **YouTube** library to organize music links. Add a video or playlist URL with a name, then organize it into local playlists. Playlist actions allow renaming, favorites, ordering and deletion. Entry actions allow title changes, favorites, collection membership and deletion. **Recente** shows successfully handed-off links and opened collections; it does not claim that a video finished playing in YouTube.
 
-Switch to **Muzică locală** for the offline audio player. **Adaugă muzică** opens Android's local-file picker. Importing retains document permissions without copying the audio or requesting broad storage access. Removing an entry never deletes the original file. Moving/deleting the original file can make playback unavailable; import it again from the new location.
+Use **Studio** for the offline audio player. **Importă / Import** opens Android's local-file picker. Importing retains document permissions without copying the audio or requesting broad storage access. Removing an entry never deletes the original file. Moving/deleting the original file can make playback unavailable; import it again from the new location.
 
 The local player uses a MediaSessionService, handles audio focus and headphone removal, and exposes system media controls. Active audio continues when the app is dismissed from Recents. Force stopping the app stops playback. The playback queue is not restored after the process/device restarts. Media3 playback is used only for imported local audio; YouTube playback belongs to the external official app/browser.
 
@@ -49,7 +49,7 @@ The local player uses a MediaSessionService, handles audio focus and headphone r
 | Android Build Tools | 35.0.0 |
 | Minimum Android SDK | 23 |
 
-Root `build.gradle` and `settings.gradle` are the effective scripts; equivalent root `.kts` copies are retained so previous workspace files are preserved. The app module uses `app/build.gradle.kts`. Uploading this project over the previous repository also replaces its incomplete root Groovy configurations.
+Root `build.gradle` and `settings.gradle` are the effective scripts; equivalent root `.kts` copies are retained so previous workspace files are preserved. The app module uses `app/build.gradle.kts`. Production application ID and release signing configuration remain unchanged; the test package uses the `.premiumtest` suffix.
 
 Structural checks use only Python's standard library and do not download or install anything:
 

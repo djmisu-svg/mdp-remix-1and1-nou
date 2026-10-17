@@ -9,7 +9,7 @@ data class ReelMotionActivity(val isPlaying: Boolean, val version: Long) {
     val generation: Long get() = version
 }
 
-/** Angles are ready for Canvas.rotate: left clockwise, right counterclockwise. */
+/** Angles are ready for Canvas.rotate: both clockwise from one shared mechanical phase. */
 data class ReelMotionFrame(
     val leftDegrees: Float,
     val rightDegrees: Float,
@@ -56,9 +56,10 @@ class ReelMotionState(
     @Synchronized
     fun sample(): ReelMotionFrame {
         val elapsed = elapsedAt(monotonicNow())
+        val phase = degrees(elapsed, REEL_PERIOD_NANOS)
         return ReelMotionFrame(
-            leftDegrees = degrees(elapsed, LEFT_PERIOD_NANOS),
-            rightDegrees = -degrees(elapsed, RIGHT_PERIOD_NANOS),
+            leftDegrees = phase,
+            rightDegrees = phase,
             isPlaying = playing,
             elapsedPlayingNanos = elapsed,
         )
@@ -98,8 +99,7 @@ class ReelMotionState(
         ((elapsed % period).toDouble() * 360.0 / period.toDouble()).toFloat()
 
     private companion object {
-        const val LEFT_PERIOD_NANOS = 7_500_000_000L
-        const val RIGHT_PERIOD_NANOS = 6_800_000_000L
+        const val REEL_PERIOD_NANOS = 7_500_000_000L
     }
 }
 

@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +70,8 @@ fun RemixApp(
     var selectedAlbum by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
     var deckPowered by rememberSaveable { mutableStateOf(true) }
+    val appContext = LocalContext.current.applicationContext
+    var recorderDesign by remember(appContext) { mutableStateOf(RecorderDesignPreferences.load(appContext)) }
     var creatingPlaylist by rememberSaveable { mutableStateOf(false) }
     var trackForPlaylist by remember { mutableStateOf<Track?>(null) }
     var trackToRemove by remember { mutableStateOf<Track?>(null) }
@@ -104,12 +107,17 @@ fun RemixApp(
                         Text(uiText("SESIUNE ANALOGICĂ", "ANALOG SESSION"), Modifier.padding(start = 10.dp),
                             color = Muted, fontSize = 9.sp, letterSpacing = 2.2.sp, fontWeight = FontWeight.Medium)
                     }
+                    RecorderDesignSelector(recorderDesign, { design ->
+                        RecorderDesignPreferences.save(appContext, design)
+                        recorderDesign = design
+                    }, Modifier.padding(bottom = 12.dp))
                     PremiumTapeDeck(
                         modifier = Modifier.fillMaxWidth(), playback = playback,
                         onTogglePlayback = onTogglePlayback, onNext = onNext, onPrevious = onPrevious,
                         onSeek = onSeek, onVolume = onVolume, onFavorite = onFavorite,
                         isFavorite = playback.currentTrackId in library.favorites,
                         poweredOverride = deckPowered, onPoweredChange = { deckPowered = it },
+                        design = recorderDesign,
                     )
                     Text(uiText("FIȘIERE LOCALE / FĂRĂ CONT / OFFLINE", "LOCAL FILES / NO ACCOUNT / OFFLINE"),
                         color = Muted, fontSize = 8.sp, letterSpacing = 1.5.sp,
