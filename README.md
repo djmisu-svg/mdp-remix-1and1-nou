@@ -2,6 +2,8 @@
 
 PR #2 now includes the complete Studio, YouTube library, and Preferences redesign, with four persistently selectable AKAI recorder designs, synchronized clockwise reels, attached reel lettering, a complete MDP launcher icon and real PCM-driven stereo peak/VU meters. See [premium features and verification](docs/PREMIUM_UI.md). Download the isolated **MdP-RemiX-premiumtest** artifact from the latest successful PR build; the original application and its data stay separate.
 
+Premium background controls support selected images, real animated GIFs and muted looping videos behind the recorder. See [background behavior and missing original asset](docs/BACKGROUND_SYSTEM.md) and the separate [iOS compatibility technical plan](docs/IOS_COMPATIBILITY_PLAN.md). The original owner-selected couple GIF is absent from the repository and must be supplied; no substitute is bundled.
+
 # MdP RemiX 1&1
 
 Native Android music player and YouTube playlist-link manager, written in Kotlin with Jetpack Compose and AndroidX Media3. Matte black #09090B and blood red #A60920 interface with Romanian/English selection and a silver AKAI Classic recorder option; responsive layouts for phones and tablets. Android 6.0/API 23 or later.

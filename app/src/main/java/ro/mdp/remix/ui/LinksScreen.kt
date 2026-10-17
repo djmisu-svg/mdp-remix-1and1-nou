@@ -184,7 +184,7 @@ fun LinksScreen(viewModel: LinkViewModel, onOpenLink: (SavedMusicLink) -> Unit) 
         }
     }
 
-    Scaffold(modifier = Modifier.testTag("youtube_library"), snackbarHost = { SnackbarHost(snackbar) }, containerColor = Background) { innerPadding ->
+    Scaffold(modifier = Modifier.testTag("youtube_library"), snackbarHost = { SnackbarHost(snackbar) }, containerColor = Color.Transparent) { innerPadding ->
         LazyVerticalGrid(
             columns = GridCells.Adaptive(320.dp),
             state = gridState,

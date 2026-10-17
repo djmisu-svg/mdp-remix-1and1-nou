@@ -41,6 +41,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ro.mdp.remix.background.BackgroundMediaLayer
+import ro.mdp.remix.background.BackgroundSettingsPanel
+import ro.mdp.remix.background.BackgroundViewModel
 import ro.mdp.remix.external.YouTubeLauncher
 import ro.mdp.remix.links.LinkViewModel
 import ro.mdp.remix.playback.PlayerViewModel
@@ -54,6 +57,7 @@ private const val RELEASES_URL = "https://github.com/djmisu-svg/mdp-remix-1and1-
 class MainActivity : ComponentActivity() {
     private val playerViewModel: PlayerViewModel by viewModels()
     private val linkViewModel: LinkViewModel by viewModels()
+    private val backgroundViewModel: BackgroundViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,10 +72,21 @@ class MainActivity : ComponentActivity() {
                 var destination by rememberSaveable { mutableStateOf(Destination.STUDIO) }
                 var externalError by rememberSaveable { mutableStateOf<String?>(null) }
                 val screenStates = rememberSaveableStateHolder()
+                val backgroundSettings by backgroundViewModel.settings.collectAsStateWithLifecycle()
+                val backgroundRenderError = remember(backgroundViewModel) {
+                    { message: String? ->
+                        if (message == null) backgroundViewModel.clearError()
+                        else backgroundViewModel.onRenderError(message)
+                    }
+                }
+                val backgroundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                    uri?.let(backgroundViewModel::select)
+                }
                 CompositionLocalProvider(LocalEnglish provides english) {
                     BackHandler(destination == Destination.SETTINGS) { destination = Destination.STUDIO }
                     BoxWithConstraints(Modifier.fillMaxSize().background(Background)) {
                         val wide = maxWidth >= 840.dp
+                        BackgroundMediaLayer(backgroundSettings, Modifier.matchParentSize(), backgroundRenderError)
                         Row(Modifier.fillMaxSize()) {
                             if (wide) NavigationRail(
                                 modifier = Modifier.fillMaxHeight().width(104.dp),
@@ -94,7 +109,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             Scaffold(
-                                modifier = Modifier.weight(1f), containerColor = Background,
+                                modifier = Modifier.weight(1f), containerColor = Color.Transparent,
                                 contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
                                 bottomBar = {
                                     if (!wide) Column {
@@ -140,6 +155,8 @@ class MainActivity : ComponentActivity() {
                                             openExternal(Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES_URL))) {
                                                 externalError = if (english) "Install a browser to check for updates." else "Instalează un browser pentru a verifica actualizările."
                                             }
+                                        }, onChangeBackground = {
+                                            backgroundPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif", "video/*"))
                                         })
                                     }
                                     }
@@ -159,6 +176,11 @@ class MainActivity : ComponentActivity() {
         try { startActivity(intent) } catch (_: ActivityNotFoundException) { onFailure() } catch (_: SecurityException) { onFailure() }
     }
 
+    override fun onStop() {
+        backgroundViewModel.flushDimming()
+        super.onStop()
+    }
+
     @Composable
     private fun DestinationIcon(destination: Destination) {
         Icon(when (destination) { Destination.STUDIO -> Icons.Default.GraphicEq; Destination.YOUTUBE -> Icons.Default.SmartDisplay; Destination.SETTINGS -> Icons.Default.Tune }, null)
@@ -172,7 +194,11 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun PreferencesScreen(english: Boolean, onLanguage: (Boolean) -> Unit, onShare: () -> Unit, onUpdates: () -> Unit) {
+    private fun PreferencesScreen(english: Boolean, onLanguage: (Boolean) -> Unit, onShare: () -> Unit, onUpdates: () -> Unit, onChangeBackground: () -> Unit) {
+        val backgroundSettings by backgroundViewModel.settings.collectAsStateWithLifecycle()
+        val backgroundLoading by backgroundViewModel.loading.collectAsStateWithLifecycle()
+        val originalAvailable by backgroundViewModel.originalAvailable.collectAsStateWithLifecycle()
+        val backgroundError by backgroundViewModel.error.collectAsStateWithLifecycle()
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = 900.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -183,6 +209,15 @@ class MainActivity : ComponentActivity() {
                     Text(uiText("Preferințe", "Preferences"), style = MaterialTheme.typography.displaySmall)
                     Text(uiText("Fă loc sunetului tău.", "Make room for your sound."), color = Muted)
                 }
+                BackgroundSettingsPanel(
+                    settings = backgroundSettings, loading = backgroundLoading, originalAvailable = originalAvailable,
+                    error = backgroundError,
+                    onChange = onChangeBackground,
+                    onRestore = backgroundViewModel::restoreOriginal, onScale = backgroundViewModel::setScale,
+                    onDimming = backgroundViewModel::setDimming, onAnimation = backgroundViewModel::setAnimationEnabled,
+                    onClearError = backgroundViewModel::clearError,
+                    onDimmingFinished = backgroundViewModel::flushDimming,
+                )
                 Surface(shape = RoundedCornerShape(24.dp), color = Background, border = BorderStroke(1.dp, Hairline)) {
                     Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -91,7 +91,7 @@ fun RemixApp(
         if (selectedPlaylistId != null && library.playlists.none { it.id == selectedPlaylistId }) selectedPlaylistId = null
     }
 
-    Scaffold(containerColor = Background, snackbarHost = { SnackbarHost(snackbar) }) { insets ->
+    Scaffold(containerColor = Color.Transparent, snackbarHost = { SnackbarHost(snackbar) }) { insets ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(insets).testTag("local_library")) {
             val wide = maxWidth >= 900.dp && maxHeight >= 500.dp
             val deckWidth = (maxWidth * 0.44f).coerceAtMost(500.dp)
