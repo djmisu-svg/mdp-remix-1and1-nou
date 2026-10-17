@@ -70,6 +70,15 @@ jobs:
           cd dist
           sha256sum MdP-RemiX-Premium-Test.apk > SHA256SUMS.txt
 
+      - name: Upload installable main application Debug APK
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' && steps.verify_apks.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MdP-RemiX-debug
+          path: dist/MdP-RemiX.apk
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload installable Premium Test APK
         if: ${{ !cancelled() && steps.build_apks.outcome == 'success' && steps.verify_apks.outcome == 'success' }}
         uses: actions/upload-artifact@v4
