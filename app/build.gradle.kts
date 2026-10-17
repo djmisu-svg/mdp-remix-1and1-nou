@@ -4,6 +4,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Production signing is supplied only by the protected release environment.
+// Missing credentials must never cause a debug-signed production APK.
+val releaseKeystorePath = providers.environmentVariable("MDP_RELEASE_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("MDP_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("MDP_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("MDP_RELEASE_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseKeystorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "ro.mdp.remix"
     compileSdk = 35
@@ -13,13 +23,34 @@ android {
         applicationId = "ro.mdp.remix"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("production") {
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
+        create("premiumTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".premiumtest"
+            versionNameSuffix = "-premium-test"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug")
+        }
         release {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("production")
+            }
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -30,13 +61,28 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    testBuildType = "premiumTest"
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     lint { abortOnError = true }
+}
+
+gradle.taskGraph.whenReady {
+    val packagesRelease = allTasks.any {
+        it.project == project && it.name in setOf(
+            "assembleRelease", "bundleRelease", "packageRelease", "installRelease"
+        )
+    }
+    if (packagesRelease) {
+        check(hasReleaseSigning && file(requireNotNull(releaseKeystorePath)).isFile) {
+            "Production release signing is unavailable. Configure the protected android-production environment; no unsigned or debug-signed release will be built."
+        }
+    }
 }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
+    androidTestImplementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
@@ -45,6 +91,7 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
@@ -52,4 +99,8 @@ dependencies {
     implementation("androidx.media3:media3-session:1.5.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

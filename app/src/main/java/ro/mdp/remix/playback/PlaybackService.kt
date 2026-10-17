@@ -2,10 +2,13 @@ package ro.mdp.remix.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.os.Process
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
@@ -19,8 +22,13 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        AudioMeters.reset()
+        // Freeze any prior service phase without resetting it. The mechanism belongs
+        // to playback, so opening a tab or recreating an Activity never restarts it.
+        ReelMotion.setPlaying(false)
+        Log.d("MdP.AudioMeters", "Service created: pid=${Process.myPid()}; meter=${System.identityHashCode(AudioMeters)}")
 
-        val player = ExoPlayer.Builder(this)
+        val player = ExoPlayer.Builder(this, MeterRenderersFactory(this))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -31,6 +39,37 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+        player.addListener(object : Player.Listener {
+            private var lastIsPlaying = false
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                // Timestamp the actual player transition, rather than a UI timer or
+                // playWhenReady (which can also be true during buffering/end).
+                ReelMotion.setPlaying(isPlaying)
+                AudioMeters.setPlaybackActive(isPlaying)
+            }
+
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (events.contains(Player.EVENT_POSITION_DISCONTINUITY) ||
+                    events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)
+                ) {
+                    AudioMeters.clear()
+                }
+                // Includes pause, buffering, audio-focus loss, errors and end-of-queue.
+                AudioMeters.setPlaybackActive(player.isPlaying)
+                ReelMotion.setPlaying(player.isPlaying)
+                if (lastIsPlaying != player.isPlaying) {
+                    lastIsPlaying = player.isPlaying
+                    Log.d("MdP.AudioMeters", "Playback active=${player.isPlaying}; state=${player.playbackState}; ready=${player.playWhenReady}; suppression=${player.playbackSuppressionReason}")
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                ReelMotion.setPlaying(false)
+                AudioMeters.setPlaybackActive(false)
+                Log.e("MdP.AudioMeters", "Playback failed: code=${error.errorCodeName}")
+            }
+        })
 
         val openApp = PendingIntent.getActivity(
             this,
@@ -64,6 +103,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        ReelMotion.setPlaying(false)
+        AudioMeters.reset()
         mediaSession?.let { session ->
             session.player.release()
             session.release()

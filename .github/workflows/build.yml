@@ -1,4 +1,4 @@
-name: Android Debug APK
+name: Android Premium Test APK
 
 on:
   push:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    name: Test, lint and build installable APK
+    name: Test, lint and verify Premium Test installation
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -43,10 +43,12 @@ jobs:
       - name: Set up Gradle and validate wrapper
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run unit tests, Android lint and Debug build
-        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug
+      - name: Run unit tests, Android lint and both APK builds
+        id: build_apks
+        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug testPremiumTestUnitTest lintPremiumTest assemblePremiumTest assemblePremiumTestAndroidTest
 
       - name: Verify signed APK and package artifact
+        id: verify_apks
         shell: bash
         run: |
           set -euo pipefail
@@ -57,18 +59,66 @@ jobs:
           badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/MdP-RemiX.apk)
           printf '%s\n' "$badging"
           grep -q "^package: name='ro.mdp.remix'" <<< "$badging"
+          grep -Fxq "application-label:'MdP RemiX 1&1'" <<< "$badging"
+          cp app/build/outputs/apk/premiumTest/app-premiumTest.apk dist/MdP-RemiX-Premium-Test.apk
+          test -s dist/MdP-RemiX-Premium-Test.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/MdP-RemiX-Premium-Test.apk
+          premium_badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/MdP-RemiX-Premium-Test.apk)
+          printf '%s\n' "$premium_badging"
+          grep -q "^package: name='ro.mdp.remix.premiumtest'" <<< "$premium_badging"
+          grep -Fxq "application-label:'MdP RemiX Premium Test'" <<< "$premium_badging"
           cd dist
-          sha256sum MdP-RemiX.apk > SHA256SUMS.txt
+          sha256sum MdP-RemiX-Premium-Test.apk > SHA256SUMS.txt
 
-      - name: Upload installable Debug APK
+      - name: Upload installable main application Debug APK
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' && steps.verify_apks.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: MdP-RemiX-debug
+          path: dist/MdP-RemiX.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload installable Premium Test APK
+        if: ${{ !cancelled() && steps.build_apks.outcome == 'success' && steps.verify_apks.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MdP-RemiX-premiumtest
           path: |
-            dist/MdP-RemiX.apk
+            dist/MdP-RemiX-Premium-Test.apk
             dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
+
+      - name: Enable emulator hardware acceleration
+        run: sudo chmod 666 /dev/kvm
+
+      - name: Verify installation, UI and live audio meters on Android 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            bash tools/verify_side_by_side_install.sh dist/MdP-RemiX.apk dist/MdP-RemiX-Premium-Test.apk
+            adb shell am force-stop ro.mdp.remix
+            adb shell input keyevent KEYCODE_HOME
+            timeout --signal=TERM --kill-after=30s 10m bash ./gradlew --no-daemon --stacktrace connectedPremiumTestAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true || { mkdir -p dist/screenshots; adb logcat -d -t 1500 | grep -E 'ro\.mdp\.remix|AudioTrack|AudioSink|Media3|AndroidRuntime|Meter|ExoPlayer|TestRunner|PremiumUiTest|BackgroundMedia|ImageDecoder|DocumentsUI' > dist/logcat.txt || true; cat dist/logcat.txt; python3 -c 'from pathlib import Path; import xml.etree.ElementTree as ET; [print("MDP_TEST_FAILURE " + case.get("name", "") + "\n" + "".join(failure.itertext())) for path in Path("app/build/outputs/androidTest-results").rglob("*.xml") for case in ET.parse(path).getroot().iter("testcase") for failure in list(case) if failure.tag in ("failure", "error")]'; adb pull /sdcard/Android/data/ro.mdp.remix.premiumtest/files/screenshots dist/screenshots/phone || true; exit 1; }
+            mkdir -p dist/screenshots
+            adb pull /sdcard/Android/data/ro.mdp.remix.premiumtest/files/screenshots dist/screenshots/phone
+            adb shell am force-stop ro.mdp.remix.premiumtest
+            adb shell wm size 1600x2560
+            adb shell wm density 240
+            adb shell am start -W -n ro.mdp.remix.premiumtest/ro.mdp.remix.MainActivity
+            sleep 2
+            adb shell screencap -p /sdcard/mdp-premium-tablet.png
+            adb pull /sdcard/mdp-premium-tablet.png dist/screenshots/tablet-studio.png
+            adb shell wm size reset
+            adb shell wm density reset
+            test "$(adb shell run-as ro.mdp.remix cat files/premiumtest-install-marker.txt | tr -d '\r')" = 'production-data-preserved'
 
       - name: Upload test and lint reports
         if: always()
@@ -78,6 +128,18 @@ jobs:
           path: |
             app/build/reports/tests/
             app/build/test-results/
-            app/build/reports/lint-results-debug.*
+            app/build/reports/lint-results-*
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            dist/logcat.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload phone and tablet screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MdP-RemiX-premium-screenshots
+          path: dist/screenshots/
           if-no-files-found: ignore
           retention-days: 14
