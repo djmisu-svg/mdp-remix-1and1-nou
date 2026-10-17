@@ -4,6 +4,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Production signing is supplied only by the protected release environment.
+// Missing credentials must never cause a debug-signed production APK.
+val releaseKeystorePath = providers.environmentVariable("MDP_RELEASE_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("MDP_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("MDP_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("MDP_RELEASE_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseKeystorePath, releaseStorePassword, releaseKeyAlias, releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "ro.mdp.remix"
     compileSdk = 35
@@ -13,9 +23,20 @@ android {
         applicationId = "ro.mdp.remix"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("production") {
+                storeFile = file(requireNotNull(releaseKeystorePath))
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -27,6 +48,9 @@ android {
             matchingFallbacks += listOf("debug")
         }
         release {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("production")
+            }
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
@@ -40,6 +64,19 @@ android {
     testBuildType = "premiumTest"
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     lint { abortOnError = true }
+}
+
+gradle.taskGraph.whenReady {
+    val packagesRelease = allTasks.any {
+        it.project == project && it.name in setOf(
+            "assembleRelease", "bundleRelease", "packageRelease", "installRelease"
+        )
+    }
+    if (packagesRelease) {
+        check(hasReleaseSigning && file(requireNotNull(releaseKeystorePath)).isFile) {
+            "Production release signing is unavailable. Configure the protected android-production environment; no unsigned or debug-signed release will be built."
+        }
+    }
 }
 
 dependencies {

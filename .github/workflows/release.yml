@@ -1,0 +1,233 @@
+name: Signed Android Production Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish the verified APK as MdP RemiX 1&1 Premium v1.0'
+        type: boolean
+        required: true
+        default: false
+  workflow_call:
+    inputs:
+      publish_release:
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-production-release-v1
+  cancel-in-progress: false
+
+jobs:
+  signed_apk:
+    name: Build and verify production-signed v1.0.0 APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: android-production
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the selected approved source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Validate signing prerequisites and restore private keystore
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          MDP_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MDP_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MDP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import base64, binascii, os, pathlib, re, sys
+          required = ('ANDROID_KEYSTORE_BASE64', 'MDP_RELEASE_STORE_PASSWORD',
+                      'MDP_RELEASE_KEY_ALIAS', 'MDP_RELEASE_KEY_PASSWORD',
+                      'ANDROID_SIGNING_CERT_SHA256')
+          missing = [name for name in required if not os.environ.get(name, '').strip()]
+          if missing:
+              sys.exit('Missing protected signing secrets: ' + ', '.join(missing))
+          pin = re.sub(r'[:\s]', '', os.environ['ANDROID_SIGNING_CERT_SHA256']).upper()
+          if not re.fullmatch(r'[0-9A-F]{64}', pin):
+              sys.exit('ANDROID_SIGNING_CERT_SHA256 must be the production certificate SHA-256 fingerprint.')
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'mdp-release-private'
+          directory.mkdir(mode=0o700)
+          try:
+              encoded = ''.join(os.environ['ANDROID_KEYSTORE_BASE64'].split())
+              decoded = base64.b64decode(encoded, validate=True)
+              if not decoded:
+                  raise ValueError('empty keystore')
+          except (ValueError, binascii.Error):
+              sys.exit('ANDROID_KEYSTORE_BASE64 is not a valid encoded keystore.')
+          (directory / 'production.keystore').write_bytes(decoded)
+          (directory / 'production.keystore').chmod(0o600)
+          (directory / 'expected-sha256.txt').write_text(pin)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('MDP_RELEASE_KEYSTORE_PATH=' + str(directory / 'production.keystore') + '\n')
+          PY
+          # Passwords are read from the environment, never process arguments.
+          if ! keytool -exportcert -rfc -keystore "$RUNNER_TEMP/mdp-release-private/production.keystore" \
+              -storepass:env MDP_RELEASE_STORE_PASSWORD -alias "$MDP_RELEASE_KEY_ALIAS" \
+              > "$RUNNER_TEMP/mdp-release-private/certificate.pem" \
+              2> "$RUNNER_TEMP/mdp-release-private/keytool.log"; then
+            echo '::error::Keystore access failed. Check the keystore, alias and passwords in android-production.'
+            exit 1
+          fi
+          if ! keytool -certreq -keystore "$RUNNER_TEMP/mdp-release-private/production.keystore" \
+              -storepass:env MDP_RELEASE_STORE_PASSWORD -keypass:env MDP_RELEASE_KEY_PASSWORD \
+              -alias "$MDP_RELEASE_KEY_ALIAS" -file "$RUNNER_TEMP/mdp-release-private/key-access.csr" \
+              > "$RUNNER_TEMP/mdp-release-private/key-access.log" 2>&1; then
+            echo '::error::Private signing key access failed. Check the alias and key password in android-production.'
+            exit 1
+          fi
+          openssl x509 -in "$RUNNER_TEMP/mdp-release-private/certificate.pem" -noout -fingerprint -sha256 \
+            > "$RUNNER_TEMP/mdp-release-private/certificate-sha256.txt"
+          openssl x509 -in "$RUNNER_TEMP/mdp-release-private/certificate.pem" -noout -subject \
+            > "$RUNNER_TEMP/mdp-release-private/certificate-subject.txt"
+          python3 - <<'PY'
+          import os, pathlib, re, sys
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'mdp-release-private'
+          actual = re.sub(r'[:\s]', '', (directory / 'certificate-sha256.txt').read_text().split('=', 1)[1]).upper()
+          if actual != (directory / 'expected-sha256.txt').read_text():
+              sys.exit('Production signing certificate does not match the configured SHA-256 pin.')
+          if re.search(r'Android\s+Debug', (directory / 'certificate-subject.txt').read_text(), re.I):
+              sys.exit('Android Debug certificates cannot sign a production release.')
+          PY
+
+      - name: Set up pinned Android SDK packages
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
+
+      - name: Run release unit tests, lint and signed APK build once
+        shell: bash
+        env:
+          MDP_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MDP_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MDP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Keep signing diagnostics private; do not upload build logs or Gradle caches.
+          if ! bash ./gradlew --no-daemon --console=plain --quiet \
+              testReleaseUnitTest lintRelease assembleRelease \
+              > "$RUNNER_TEMP/mdp-release-private/gradle.log" 2>&1; then
+            echo '::error::Release build, unit tests or lint failed. No production APK will be published. Check signing secrets and source before retrying.'
+            exit 1
+          fi
+
+      - name: Verify production certificate, APK metadata and alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_tools="$ANDROID_HOME/build-tools/35.0.0"
+          apk='app/build/outputs/apk/release/app-release.apk'
+          test -s "$apk"
+          "$sdk_tools/apksigner" verify --verbose --print-certs "$apk" \
+            > "$RUNNER_TEMP/mdp-release-private/apksigner.txt"
+          "$sdk_tools/zipalign" -c -P 16 -v 4 "$apk" \
+            > "$RUNNER_TEMP/mdp-release-private/zipalign.txt"
+          "$sdk_tools/aapt" dump badging "$apk" \
+            > "$RUNNER_TEMP/mdp-release-private/badging.txt"
+          python3 - <<'PY'
+          import os, pathlib, re, sys
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'mdp-release-private'
+          badging = (directory / 'badging.txt').read_text()
+          package = re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", badging, re.M)
+          if not package or package.groups() != ('ro.mdp.remix', '3', '1.0.0'):
+              sys.exit('Release package or version is incorrect.')
+          if "application-label:'MdP RemiX 1&1'" not in badging or 'application-debuggable' in badging:
+              sys.exit('Release label or debuggable status is incorrect.')
+          signing = (directory / 'apksigner.txt').read_text()
+          actual = re.search(r'^Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]+)', signing, re.M)
+          if not actual or actual.group(1).upper() != (directory / 'expected-sha256.txt').read_text():
+              sys.exit('The built APK does not have the pinned production signing certificate.')
+          if len(re.findall(r'^Signer #\d+ certificate SHA-256 digest:', signing, re.M)) != 1:
+              sys.exit('Unexpected additional APK signers.')
+          if re.search(r'certificate DN:.*Android\s+Debug', signing, re.I):
+              sys.exit('Debug-signed APK rejected.')
+          PY
+          mkdir -p dist-release
+          cp "$apk" dist-release/MdP-RemiX-Premium-v1.0.0.apk
+          (cd dist-release && sha256sum MdP-RemiX-Premium-v1.0.0.apk > SHA256SUMS.txt)
+          {
+            echo '### Production release verification'
+            echo 'Signed APK, pinned certificate, package ro.mdp.remix, version 1.0.0 (3), non-debuggable manifest and ZIP alignment verified.'
+            echo 'Release unit tests and Android lint passed. Device installation was not performed by this workflow.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload verified production APK only
+        uses: actions/upload-artifact@v4
+        with:
+          name: MdP-RemiX-Premium-v1.0.0-signed
+          path: |
+            dist-release/MdP-RemiX-Premium-v1.0.0.apk
+            dist-release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Delete private signing material and build diagnostics
+        if: always()
+        shell: bash
+        run: |
+          rm -rf -- "$RUNNER_TEMP/mdp-release-private"
+          rm -rf -- "$HOME/.gradle/daemon"
+
+  publish:
+    name: Publish verified APK to GitHub Releases
+    needs: signed_apk
+    if: ${{ inputs.publish_release }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download only the verified release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MdP-RemiX-Premium-v1.0.0-signed
+          path: dist-release
+
+      - name: Publish MdP RemiX 1&1 Premium v1.0
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd dist-release && sha256sum -c SHA256SUMS.txt)
+          if gh release view v1.0.0 > /dev/null 2>&1; then
+            echo '::error::Release v1.0.0 already exists. Existing production releases will not be overwritten.'
+            exit 1
+          fi
+          cat > release-notes.txt <<'NOTES'
+          MdP RemiX 1&1 Premium v1.0
+
+          Download MdP-RemiX-Premium-v1.0.0.apk below and open it on Android 6.0 or newer. Allow installation from your browser or file manager when Android asks.
+
+          Package: ro.mdp.remix. Version: 1.0.0 (3). Production-signed APK; release unit tests, lint, certificate, package and alignment checks passed. This release workflow does not perform device installation tests.
+
+          Compatible updates require the same production signing key. The separately installed Premium Test application remains independent. If Android reports a signing conflict with an existing ro.mdp.remix installation, do not uninstall it if its data must be retained; obtain an update signed by its original key.
+          NOTES
+          gh release create v1.0.0 --target "$GITHUB_SHA" --title 'MdP RemiX 1&1 Premium v1.0' --notes-file release-notes.txt --draft
+          gh release upload v1.0.0 dist-release/MdP-RemiX-Premium-v1.0.0.apk dist-release/SHA256SUMS.txt
+          gh release edit v1.0.0 --draft=false --latest
+          echo "Release download: https://github.com/$GH_REPO/releases/download/v1.0.0/MdP-RemiX-Premium-v1.0.0.apk" >> "$GITHUB_STEP_SUMMARY"

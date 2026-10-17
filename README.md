@@ -4,6 +4,8 @@ PR #2 now includes the complete Studio, YouTube library, and Preferences redesig
 
 Premium background controls support selected images, real animated GIFs and muted looping videos behind the recorder. See [background behavior and missing original asset](docs/BACKGROUND_SYSTEM.md) and the separate [iOS compatibility technical plan](docs/IOS_COMPATIBILITY_PLAN.md). The original owner-selected couple GIF is absent from the repository and must be supplied; no substitute is bundled.
 
+Production v1.0 signing is prepared but not yet executed. Follow the [Android-tablet signing instructions](docs/ANDROID_RELEASE_SIGNING_TABLET.md) to reuse an existing production key or securely create and back up a first-release key, configure GitHub secrets, and run the manual signed-release workflow. No unsigned or debug-signed APK is published as a production release.
+
 # MdP RemiX 1&1
 
 Native Android music player and YouTube playlist-link manager, written in Kotlin with Jetpack Compose and AndroidX Media3. Matte black #09090B and blood red #A60920 interface with Romanian/English selection and a silver AKAI Classic recorder option; responsive layouts for phones and tablets. Android 6.0/API 23 or later.
@@ -51,7 +53,7 @@ The local player uses a MediaSessionService, handles audio focus and headphone r
 | Android Build Tools | 35.0.0 |
 | Minimum Android SDK | 23 |
 
-Root `build.gradle` and `settings.gradle` are the effective scripts; equivalent root `.kts` copies are retained so previous workspace files are preserved. The app module uses `app/build.gradle.kts`. Production application ID and release signing configuration remain unchanged; the test package uses the `.premiumtest` suffix.
+Root `build.gradle` and `settings.gradle` are the effective scripts; equivalent root `.kts` copies are retained so previous workspace files are preserved. The app module uses `app/build.gradle.kts`. Production application ID remains `ro.mdp.remix`; release signing is supplied by the protected `android-production` environment. The test package keeps its `.premiumtest` suffix and separate debug signing.
 
 Structural checks use only Python's standard library and do not download or install anything:
 
