@@ -71,7 +71,7 @@ After secrets and backups are complete, paste this into Termux to build, verify 
 gh workflow run android.yml --repo djmisu-svg/mdp-remix-1and1-nou --ref feature/premium-settings-share-updates -f target=release -f publish_release=true
 ```
 
-If you want only a private Actions APK artifact, change `publish_release=true` to `publish_release=false` **before** running it. Run one option, not both. The registered `android.yml` entry works from the existing branch without merging PR #2. Do not merge the feature branch merely to make the new workflow appear in the Actions menu.
+If you want only an Actions APK artifact without a GitHub Release, change `publish_release=true` to `publish_release=false` **before** running it. Artifacts in a public repository are accessible to GitHub users with repository access; they are not a private backup location. Run one option, not both. The registered `android.yml` entry works from the existing branch without merging PR #2. Do not merge the feature branch merely to make the new workflow appear in the Actions menu.
 
 The release workflow checks credentials/certificate before SDK setup or building, rejects Android Debug certificates, builds release unit tests/lint/APK once, and verifies the APK signature, pinned certificate, package, version, non-debuggable manifest and ZIP alignment. It uploads only the signed APK and checksum. Private temporary keys and signing diagnostics are deleted afterward. No emulator installation test is performed by this workflow.
 
