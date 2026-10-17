@@ -24,15 +24,18 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.filterToOne
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAncestors
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -190,7 +193,7 @@ class BackgroundMediaTest {
         await("Fill must persist") { settings().scale == BackgroundScale.FILL }
         settleFrames()
         compose.onNodeWithTag("background_fill").assertIsSelected()
-        compose.onNodeWithTag("background_dimming").performScrollTo()
+        scrollSettingIntoView("background_dimming")
         settleFrames()
         compose.onNodeWithTag("background_dimming").performSemanticsAction(SemanticsActions.SetProgress) { change ->
             assertTrue(change(.72f))
@@ -277,7 +280,8 @@ class BackgroundMediaTest {
                 compose.onAllNodesWithTag("background_error").fetchSemanticsNodes().isNotEmpty()
         }
         settleFrames()
-        compose.onNodeWithTag("background_error").performScrollTo().assertIsDisplayed()
+        scrollSettingIntoView("background_error")
+        compose.onNodeWithTag("background_error").assertIsDisplayed()
         assertEquals("An inaccessible URI must stay saved until the user chooses otherwise", unavailable.toString(), settings().uri)
         clickSetting("background_restore")
         await("Restore must select only the real Original source") { settings().kind == BackgroundKind.ORIGINAL && settings().uri == null }
@@ -326,14 +330,14 @@ class BackgroundMediaTest {
     }
 
     private fun clickSetting(tag: String) {
-        compose.onNodeWithTag(tag).performScrollTo()
+        scrollSettingIntoView(tag)
         settleFrames()
         compose.onNodeWithTag(tag).performClick()
         settleFrames()
     }
 
     private fun setAnimation(enabled: Boolean) {
-        compose.onNodeWithTag("background_animation").performScrollTo()
+        scrollSettingIntoView("background_animation")
         settleFrames()
         val current = settings().animationEnabled
         if (current != enabled) compose.onNodeWithTag("background_animation").performClick()
@@ -600,6 +604,40 @@ class BackgroundMediaTest {
         // A posted main-thread barrier orders completed UI work without waiting
         // for a continuously playing native renderer to become globally idle.
         instrumentation.runOnMainSync { }
+    }
+
+    private fun scrollSettingIntoView(tag: String) {
+        var lastGeometry = "not measured"
+        repeat(12) { step ->
+            val targetNode = compose.onNodeWithTag(tag, useUnmergedTree = true)
+            val target = targetNode.fetchSemanticsNode()
+            val scrollParent = targetNode.onAncestors().filterToOne(hasScrollAction())
+            val parent = scrollParent.fetchSemanticsNode()
+            val viewport = parent.boundsInRoot
+            // boundsInRoot is clipped for an offscreen child. Position plus
+            // measured size retains its actual location inside the scroll area.
+            val top = target.positionInRoot.y
+            val bottom = top + target.size.height
+            val delta = when {
+                top < viewport.top -> top - viewport.top
+                bottom > viewport.bottom -> bottom - viewport.bottom
+                else -> 0f
+            }
+            lastGeometry = "step=$step target=$top..$bottom viewport=${viewport.top}..${viewport.bottom} delta=$delta"
+            if (abs(delta) <= 1f) return
+            assertTrue("The settings viewport must be laid out: $lastGeometry", viewport.height > 0f)
+            val reversed = parent.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange)?.reverseScrolling == true
+            scrollParent.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+                assertTrue("The real settings scroll action must accept $tag: $lastGeometry",
+                    scroll(0f, if (reversed) -delta else delta))
+            }
+            // Legacy Compose performScrollTo loops ScrollBy/bounds reads without
+            // advancing a manually paused clock. Give the real scroll animation
+            // frames before measuring again, keeping reel tests' clock explicit.
+            compose.mainClock.advanceTimeBy(600)
+            instrumentation.runOnMainSync { }
+        }
+        throw AssertionError("Could not bring $tag into view after 12 frame-advancing scroll actions; $lastGeometry")
     }
 
     /** Must be called on the main thread; never keep an Activity reference across changes. */
