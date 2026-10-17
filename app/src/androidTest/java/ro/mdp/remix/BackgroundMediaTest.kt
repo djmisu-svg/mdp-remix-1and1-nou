@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.DocumentsContract
+import android.util.Log
 import android.view.TextureView
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -267,12 +268,20 @@ class BackgroundMediaTest {
             await("The document picker must expose its roots drawer") { clickSystemDescription("Show roots", "Show navigation drawer", "Open navigation drawer") }
             await("The isolated test provider must appear in SAF") { clickSystemText("MdP test media") }
         }
-        await("The real fixture document must be selectable") { tapDocumentTitle(name) }
+        await("The real fixture document must be selectable") { selectDocumentTitle(name) }
         val uri = DocumentsContract.buildDocumentUri(BackgroundFixtureDocumentsProvider.AUTHORITY, name)
+        var nextSelectionAttempt = SystemClock.uptimeMillis() + 750
         await("The picker result must be validated and saved") {
             // Some DocumentsUI layouts select the file first and require an
             // explicit toolbar/bottom-bar confirmation before returning its URI.
-            if (documentsUiVisible()) confirmDocumentSelection()
+            if (documentsUiVisible() && !confirmDocumentSelection() &&
+                SystemClock.uptimeMillis() >= nextSelectionAttempt) {
+                // A provider model refresh can replace the row during the first
+                // interaction. Refresh its node and retry without toggling an
+                // already selected document or repeatedly opening its preview.
+                selectDocumentTitle(name)
+                nextSelectionAttempt = SystemClock.uptimeMillis() + 750
+            }
             settings().uri == uri.toString() && settings().kind == kind
         }
         settleFrames()
@@ -419,38 +428,66 @@ class BackgroundMediaTest {
         }
     }
 
-    private fun tapDocumentTitle(name: String): Boolean {
+    private fun selectDocumentTitle(name: String): Boolean {
         val root = instrumentation.uiAutomation.rootInActiveWindow ?: return false
         if (!root.packageName.toString().contains("documentsui", ignoreCase = true)) return false
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
-            // DocumentsUI exposes a preview/quick-view accessibility action on
-            // thumbnails and rows. A normal user tap on the exact filename uses
-            // the picker selection path instead of launching Google Photos.
+            // DocumentsUI's row ACTION_CLICK prefers Quick View. Its supported
+            // ACTION_LONG_CLICK explicitly selects the document, allowing the
+            // picker confirmation action to return a real persistable URI.
             if (node.isVisibleToUser && node.isEnabled && node.text?.toString()?.trim().equals(name, ignoreCase = true)) {
+                val ancestors = mutableListOf<AccessibilityNodeInfo>()
+                var ancestor: AccessibilityNodeInfo? = node
+                repeat(7) {
+                    ancestor?.let { current -> ancestors += current; ancestor = current.parent }
+                }
+                if (ancestors.any { it.isSelected }) return true
+                for (candidate in ancestors) {
+                    if (candidate.isEnabled && candidate.actionList.any { it.id == AccessibilityNodeInfo.ACTION_LONG_CLICK } &&
+                        candidate.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) return true
+                }
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
                 if (bounds.isEmpty) continue
-                val downTime = SystemClock.uptimeMillis()
-                val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN,
-                    bounds.exactCenterX(), bounds.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
-                val up = MotionEvent.obtain(downTime, (SystemClock.uptimeMillis() + 1).coerceAtLeast(downTime + 1),
-                    MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY(), 0)
-                    .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
-                return try {
-                    val pressed = instrumentation.uiAutomation.injectInputEvent(down, true)
-                    val released = instrumentation.uiAutomation.injectInputEvent(up, true)
-                    pressed && released
-                } finally {
-                    down.recycle()
-                    up.recycle()
-                }
+                return injectFingerTap(bounds)
             }
             repeat(node.childCount) { index -> node.getChild(index)?.let(queue::add) }
         }
         return false
+    }
+
+    private fun injectFingerTap(bounds: Rect): Boolean {
+        val downTime = SystemClock.uptimeMillis()
+        fun event(action: Int): MotionEvent {
+            val pointer = MotionEvent.PointerProperties().apply {
+                id = 0
+                toolType = MotionEvent.TOOL_TYPE_FINGER
+            }
+            val coordinates = MotionEvent.PointerCoords().apply {
+                x = bounds.exactCenterX()
+                y = bounds.exactCenterY()
+                pressure = if (action == MotionEvent.ACTION_UP) 0f else 1f
+                size = 1f
+            }
+            // Setting SOURCE_TOUCHSCREEN on the short obtain() overload still
+            // leaves TOOL_TYPE_UNKNOWN. DocumentsUI routes FINGER/STYLUS only.
+            return MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, 1,
+                arrayOf(pointer), arrayOf(coordinates), 0, 0, 1f, 1f, 0, 0,
+                InputDevice.SOURCE_TOUCHSCREEN, 0)
+        }
+        val down = event(MotionEvent.ACTION_DOWN)
+        try {
+            val pressed = instrumentation.uiAutomation.injectInputEvent(down, true)
+            Thread.sleep(60)
+            val up = event(MotionEvent.ACTION_UP)
+            return try {
+                val released = instrumentation.uiAutomation.injectInputEvent(up, true)
+                pressed && released
+            } finally { up.recycle() }
+        } finally { down.recycle() }
     }
 
     private fun dumpPickerFailure(kind: BackgroundKind) {
@@ -461,16 +498,23 @@ class BackgroundMediaTest {
             root?.let(queue::add)
             val lines = mutableListOf<String>()
             var inspected = 0
-            while (queue.isNotEmpty() && inspected++ < 180 && lines.size < 45) {
+            while (queue.isNotEmpty() && inspected++ < 500 && lines.size < 45) {
                 val node = queue.removeFirst()
-                if (node.isVisibleToUser) {
+                val meaningful = !node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank() ||
+                    node.isClickable || node.isLongClickable || node.isSelected ||
+                    node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_LONG_CLICK }
+                if (node.isVisibleToUser && meaningful) {
                     fun bounded(value: CharSequence?) = value?.toString()?.replace('\n', ' ')?.take(100).orEmpty()
+                    val bounds = Rect().also(node::getBoundsInScreen)
+                    val actions = node.actionList.joinToString { "${it.id}:${it.label?.toString().orEmpty()}" }.take(150)
                     lines += "id=${bounded(node.viewIdResourceName)} text=${bounded(node.text)} " +
-                        "description=${bounded(node.contentDescription)} clickable=${node.isClickable} enabled=${node.isEnabled}"
+                        "description=${bounded(node.contentDescription)} selected=${node.isSelected} " +
+                        "clickable=${node.isClickable} enabled=${node.isEnabled} bounds=${bounds.toShortString()} actions=$actions"
                 }
                 repeat(node.childCount) { index -> node.getChild(index)?.let(queue::add) }
             }
-            System.err.println("SAF picker failure ($kind), package=${root?.packageName}:\n${lines.joinToString("\n")}")
+            Log.e("MdP.BackgroundMediaTest", "SAF picker failure ($kind), package=${root?.packageName}, inspected=$inspected")
+            lines.forEach { Log.e("MdP.BackgroundMediaTest", it) }
         }
         runCatching { capture("picker-failure-${kind.name.lowercase()}") }
     }
