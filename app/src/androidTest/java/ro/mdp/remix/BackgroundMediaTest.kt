@@ -11,6 +11,7 @@ import android.graphics.Rect
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.util.Log
@@ -49,6 +50,9 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
@@ -84,8 +88,11 @@ class BackgroundMediaTest {
     private var wave: File? = null
     private var originalPreference: String? = null
     private var resizedDisplay = false
+    private var watchdog: ScheduledExecutorService? = null
+    private var watchdogTask: ScheduledFuture<*>? = null
 
     @Before fun launchIsolatedBackgroundAndRealAudio() {
+        startWatchdog()
         // DocumentsUI resource IDs provide an unambiguous selection action even
         // when its visible button is rendered as OPEN or SELECT by the platform.
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
@@ -123,19 +130,28 @@ class BackgroundMediaTest {
     }
 
     @After fun restoreEmulatorState() {
-        controller?.let { player ->
-            instrumentation.runOnMainSync { player.stop(); player.clearMediaItems() }
-            await("Cleanup must stop the real foreground clock") { !ReelMotion.snapshot().isPlaying }
+        try {
+            controller?.let { player ->
+                instrumentation.runOnMainSync { player.stop(); player.clearMediaItems() }
+                await("Cleanup must stop the real foreground clock") { !ReelMotion.snapshot().isPlaying }
+            }
+            connection?.let { future -> instrumentation.runOnMainSync { MediaController.releaseFuture(future) } }
+            compose.mainClock.autoAdvance = true
+            scenario?.close()
+            val prefs = target.getSharedPreferences(BACKGROUND_PREFERENCES, Context.MODE_PRIVATE)
+            val edit = prefs.edit()
+            originalPreference?.let { edit.putString(BACKGROUND_SETTINGS_KEY, it) } ?: edit.remove(BACKGROUND_SETTINGS_KEY)
+            check(edit.commit())
+            wave?.delete()
+            if (resizedDisplay) { shell("wm size reset"); shell("wm density reset") }
+        } finally {
+            // Keep diagnostics alive through ActivityScenario/Compose cleanup,
+            // since synchronization there can be the operation that stalls.
+            watchdogTask?.cancel(false)
+            watchdog?.shutdownNow()
+            watchdogTask = null
+            watchdog = null
         }
-        connection?.let { future -> instrumentation.runOnMainSync { MediaController.releaseFuture(future) } }
-        compose.mainClock.autoAdvance = true
-        scenario?.close()
-        val prefs = target.getSharedPreferences(BACKGROUND_PREFERENCES, Context.MODE_PRIVATE)
-        val edit = prefs.edit()
-        originalPreference?.let { edit.putString(BACKGROUND_SETTINGS_KEY, it) } ?: edit.remove(BACKGROUND_SETTINGS_KEY)
-        check(edit.commit())
-        wave?.delete()
-        if (resizedDisplay) { shell("wm size reset"); shell("wm density reset") }
     }
 
     @Test fun safGifFramesAnimatePauseAndPersistWithoutInterruptingMusic() {
@@ -579,6 +595,26 @@ class BackgroundMediaTest {
     private fun realWait(milliseconds: Long) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(milliseconds)
         while (System.nanoTime() < deadline) Thread.sleep(40)
+    }
+
+    private fun startWatchdog() {
+        val testThread = Thread.currentThread()
+        val executor = Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "MdP-background-test-watchdog").apply { isDaemon = true }
+        }
+        watchdog = executor
+        watchdogTask = executor.schedule({
+            // Diagnostics only: never mutate playback, unblock a failed check,
+            // or call synchronization/UI APIs from this independent thread.
+            Log.e("MdP.BackgroundMediaTest", "Background test has exceeded 90 seconds; " +
+                "background=${BackgroundMediaDiagnostics.state.value}; music=${AudioMeters.levels.value}")
+            for ((label, thread) in listOf("test" to testThread, "main" to Looper.getMainLooper().thread)) {
+                Log.e("MdP.BackgroundMediaTest", "$label thread=${thread.name}, state=${thread.state}")
+                thread.stackTrace.take(30).forEach { frame ->
+                    Log.e("MdP.BackgroundMediaTest", "  at ${frame.toString().take(240)}")
+                }
+            }
+        }, 90, TimeUnit.SECONDS)
     }
 
     private fun shell(command: String) {
