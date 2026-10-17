@@ -160,7 +160,12 @@ class RecorderDesignTest {
     }
 
     private fun assertDesignAndSharedControls(design: RecorderDesign) {
+        // Audio uses real time while the Compose test clock is deliberately paused.
+        // Bracket the explicit UI frames, rather than compare a frozen rendering
+        // against a later live clock after many potentially slow semantics queries.
+        val frameStart = ReelMotion.snapshot()
         settleFrames()
+        val frameEnd = ReelMotion.snapshot()
         assertNoSystemErrorDialog()
         assertEquals(design.id, compose.onNodeWithTag("deck_design").fetchSemanticsNode()
             .config[SemanticsProperties.StateDescription])
@@ -181,9 +186,15 @@ class RecorderDesignTest {
             description.substringAfter("angle=").substringBefore(';').toFloat()
         }
         assertTrue("Both clockwise reels must stay synchronized in ${design.label}", abs(angleDelta(angles[0], angles[1])) < 0.5f)
-        val source = ReelMotion.snapshot()
-        assertTrue("Changing recorder design must render the existing left phase", abs(angleDelta(source.leftDegrees, angles[0])) < 10f)
-        assertTrue("Changing recorder design must render the existing right phase", abs(angleDelta(source.rightDegrees, angles[1])) < 10f)
+        val allowedAdvance = forwardAngleDelta(frameStart.leftDegrees, frameEnd.leftDegrees)
+        for ((index, channel) in listOf("left", "right").withIndex()) {
+            val renderedAdvance = forwardAngleDelta(frameStart.leftDegrees, angles[index])
+            assertTrue(
+                "${design.label} $channel phase ${angles[index]} must come from the explicit frame interval " +
+                    "${frameStart.leftDegrees}..${frameEnd.leftDegrees}",
+                renderedAdvance <= allowedAdvance + .5f || renderedAdvance >= 359.5f,
+            )
+        }
     }
 
     private fun assertContinuousPlayback(player: MediaController, priorElapsed: Long, priorVersion: Long) {
@@ -256,6 +267,8 @@ class RecorderDesignTest {
     }
 
     private fun angleDelta(from: Float, to: Float): Float = ((to - from + 540f) % 360f) - 180f
+
+    private fun forwardAngleDelta(from: Float, to: Float): Float = ((to - from) % 360f + 360f) % 360f
 
     private fun createLongStereoWave(): File {
         val rate = 44_100

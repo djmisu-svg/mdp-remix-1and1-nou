@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
@@ -39,7 +40,13 @@ class LauncherIconTest {
 
     @Test
     fun legacyFallbackContainsThreeCompleteLettersAndReadableP() {
-        assertEquals(R.mipmap.ic_launcher, target.applicationInfo.icon)
+        val selectedIcon = target.applicationInfo.icon
+        assertTrue("Android must select the normal or round launcher icon", selectedIcon in setOf(R.mipmap.ic_launcher, R.mipmap.ic_launcher_round))
+        assertEquals("mipmap", target.resources.getResourceTypeName(selectedIcon))
+        val selectedDrawable = drawable(selectedIcon)
+        val selected = render(selectedDrawable)
+        assertLettersPresent(selected, expanded = Build.VERSION.SDK_INT >= 26 && selectedDrawable is AdaptiveIconDrawable)
+        save("launcher-system-selected", selected)
         val icon = render(drawable(R.drawable.ic_launcher), 108)
         assertEquals(Color.rgb(9, 9, 11), icon.getPixel(0, 0))
         assertLettersPresent(icon, expanded = false)
