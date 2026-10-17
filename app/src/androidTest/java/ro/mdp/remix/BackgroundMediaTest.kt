@@ -1,16 +1,21 @@
 package ro.mdp.remix
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.view.TextureView
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
@@ -80,6 +85,11 @@ class BackgroundMediaTest {
     private var resizedDisplay = false
 
     @Before fun launchIsolatedBackgroundAndRealAudio() {
+        // DocumentsUI resource IDs provide an unambiguous selection action even
+        // when its visible button is rendered as OPEN or SELECT by the platform.
+        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        }
         val prefs = target.getSharedPreferences(BACKGROUND_PREFERENCES, Context.MODE_PRIVATE)
         originalPreference = prefs.getString(BACKGROUND_SETTINGS_KEY, null)
         check(prefs.edit().remove(BACKGROUND_SETTINGS_KEY).commit())
@@ -249,7 +259,7 @@ class BackgroundMediaTest {
         assertForegroundContinues(0)
     }
 
-    private fun chooseDocument(name: String, kind: BackgroundKind): Uri {
+    private fun chooseDocument(name: String, kind: BackgroundKind): Uri = try {
         openSettings()
         clickSetting("background_change")
         await("The supported Android document picker must open") { documentsUiVisible() }
@@ -257,15 +267,20 @@ class BackgroundMediaTest {
             await("The document picker must expose its roots drawer") { clickSystemDescription("Show roots", "Show navigation drawer", "Open navigation drawer") }
             await("The isolated test provider must appear in SAF") { clickSystemText("MdP test media") }
         }
-        await("The real fixture document must be selectable") { clickSystemText(name) }
+        await("The real fixture document must be selectable") { tapDocumentTitle(name) }
         val uri = DocumentsContract.buildDocumentUri(BackgroundFixtureDocumentsProvider.AUTHORITY, name)
         await("The picker result must be validated and saved") {
-            if (documentsUiVisible()) clickSystemText("Open")
+            // Some DocumentsUI layouts select the file first and require an
+            // explicit toolbar/bottom-bar confirmation before returning its URI.
+            if (documentsUiVisible()) confirmDocumentSelection()
             settings().uri == uri.toString() && settings().kind == kind
         }
         settleFrames()
         awaitMedia(kind, uri)
-        return uri
+        uri
+    } catch (failure: Throwable) {
+        dumpPickerFailure(kind)
+        throw failure
     }
 
     private fun openSettings() {
@@ -386,7 +401,78 @@ class BackgroundMediaTest {
         ?.contains("documentsui", ignoreCase = true) == true
 
     private fun clickSystemText(text: String): Boolean = clickSystemNode { node ->
-        node.text?.toString() == text || node.contentDescription?.toString()?.contains(text) == true
+        node.text?.toString()?.trim().equals(text, ignoreCase = true) ||
+            node.contentDescription?.toString()?.contains(text, ignoreCase = true) == true
+    }
+
+    private fun confirmDocumentSelection(): Boolean {
+        // Use actual picker actions, not a generic "Open" substring that could
+        // accidentally click "Open navigation drawer" or a preview affordance.
+        val confirmationIds = setOf("action_menu_select", "action_menu_open", "button1")
+        if (clickSystemNode { node -> node.viewIdResourceName?.substringAfterLast('/') in confirmationIds }) return true
+        val labels = setOf("open", "select", "choose", "use this file")
+        return clickSystemNode { node ->
+            labels.any { label ->
+                node.text?.toString()?.trim().equals(label, ignoreCase = true) ||
+                    node.contentDescription?.toString()?.trim().equals(label, ignoreCase = true)
+            }
+        }
+    }
+
+    private fun tapDocumentTitle(name: String): Boolean {
+        val root = instrumentation.uiAutomation.rootInActiveWindow ?: return false
+        if (!root.packageName.toString().contains("documentsui", ignoreCase = true)) return false
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            // DocumentsUI exposes a preview/quick-view accessibility action on
+            // thumbnails and rows. A normal user tap on the exact filename uses
+            // the picker selection path instead of launching Google Photos.
+            if (node.isVisibleToUser && node.isEnabled && node.text?.toString()?.trim().equals(name, ignoreCase = true)) {
+                val bounds = Rect()
+                node.getBoundsInScreen(bounds)
+                if (bounds.isEmpty) continue
+                val downTime = SystemClock.uptimeMillis()
+                val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN,
+                    bounds.exactCenterX(), bounds.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                val up = MotionEvent.obtain(downTime, (SystemClock.uptimeMillis() + 1).coerceAtLeast(downTime + 1),
+                    MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY(), 0)
+                    .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                return try {
+                    val pressed = instrumentation.uiAutomation.injectInputEvent(down, true)
+                    val released = instrumentation.uiAutomation.injectInputEvent(up, true)
+                    pressed && released
+                } finally {
+                    down.recycle()
+                    up.recycle()
+                }
+            }
+            repeat(node.childCount) { index -> node.getChild(index)?.let(queue::add) }
+        }
+        return false
+    }
+
+    private fun dumpPickerFailure(kind: BackgroundKind) {
+        // Text stays bounded; screenshots are files only, never binary/Base64 logs.
+        runCatching {
+            val root = instrumentation.uiAutomation.rootInActiveWindow
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            root?.let(queue::add)
+            val lines = mutableListOf<String>()
+            var inspected = 0
+            while (queue.isNotEmpty() && inspected++ < 180 && lines.size < 45) {
+                val node = queue.removeFirst()
+                if (node.isVisibleToUser) {
+                    fun bounded(value: CharSequence?) = value?.toString()?.replace('\n', ' ')?.take(100).orEmpty()
+                    lines += "id=${bounded(node.viewIdResourceName)} text=${bounded(node.text)} " +
+                        "description=${bounded(node.contentDescription)} clickable=${node.isClickable} enabled=${node.isEnabled}"
+                }
+                repeat(node.childCount) { index -> node.getChild(index)?.let(queue::add) }
+            }
+            System.err.println("SAF picker failure ($kind), package=${root?.packageName}:\n${lines.joinToString("\n")}")
+        }
+        runCatching { capture("picker-failure-${kind.name.lowercase()}") }
     }
 
     private fun clickSystemDescription(vararg descriptions: String): Boolean = clickSystemNode { node ->
