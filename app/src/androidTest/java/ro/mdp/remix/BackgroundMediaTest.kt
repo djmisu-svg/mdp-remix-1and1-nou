@@ -34,7 +34,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
-import androidx.lifecycle.Lifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -44,6 +43,8 @@ import androidx.media3.session.SessionToken
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.google.common.util.concurrent.ListenableFuture
 import java.io.File
 import java.io.FileOutputStream
@@ -136,6 +137,16 @@ class BackgroundMediaTest {
                 await("Cleanup must stop the real foreground clock") { !ReelMotion.snapshot().isPlaying }
             }
             connection?.let { future -> instrumentation.runOnMainSync { MediaController.releaseFuture(future) } }
+            // ActivityScenario.close() itself waits for global main-loop idle.
+            // Hide through Android first so a live video/GIF is really paused
+            // before entering that synchronization helper.
+            if (scenario != null) {
+                shell("input keyevent KEYCODE_HOME")
+                await("Cleanup must hide and pause the decorative renderer") {
+                    val state = BackgroundMediaDiagnostics.state.value
+                    !state.lifecycleStarted && !state.playing
+                }
+            }
             compose.mainClock.autoAdvance = true
             scenario?.close()
             val prefs = target.getSharedPreferences(BACKGROUND_PREFERENCES, Context.MODE_PRIVATE)
@@ -186,7 +197,7 @@ class BackgroundMediaTest {
         }
         settleFrames()
         await("Dimming must persist as a real preference") { abs(settings().dimming - .72f) < .01f }
-        checkNotNull(scenario).recreate()
+        recreateVisibleActivity()
         settleFrames()
         awaitMedia(BackgroundKind.GIF, gif)
         assertEquals(gif.toString(), settings().uri)
@@ -363,14 +374,17 @@ class BackgroundMediaTest {
 
     private fun assertLifecyclePausesOnlyBackground() {
         val priorAudio = ReelMotion.snapshot().elapsedPlayingNanos
-        checkNotNull(scenario).moveToState(Lifecycle.State.CREATED)
+        shell("input keyevent KEYCODE_HOME")
         await("A hidden Activity must pause its background renderer") {
             val state = BackgroundMediaDiagnostics.state.value
             !state.lifecycleStarted && !state.playing
         }
         assertBackgroundFrozen()
         assertForegroundContinues(priorAudio)
-        checkNotNull(scenario).moveToState(Lifecycle.State.RESUMED)
+        // Bring the existing task back through Android, preserving its Activity
+        // and the Media3 session. No ActivityScenario global-idle wait is used
+        // while the native video decoder is intentionally submitting frames.
+        shell("am start -n ${target.packageName}/ro.mdp.remix.MainActivity -f 0x10020000")
         settleFrames()
         await("The visible Activity must resume animation") {
             val state = BackgroundMediaDiagnostics.state.value
@@ -398,7 +412,8 @@ class BackgroundMediaTest {
 
     private fun nativePixelHash(): Int {
         var hash = 0
-        checkNotNull(scenario).onActivity { activity ->
+        instrumentation.runOnMainSync {
+            val activity = checkNotNull(resumedActivity()) { "A visible MainActivity is required for native pixel capture" }
             val views = descendants(activity.window.decorView).filter { it.tag == "background_media_native" }
             val texture = views.filterIsInstance<TextureView>().firstOrNull { it.isAvailable }
             val bitmap = if (texture != null) checkNotNull(texture.getBitmap(64, 64)) else {
@@ -580,7 +595,32 @@ class BackgroundMediaTest {
         }
     }
 
-    private fun settleFrames() { compose.mainClock.advanceTimeBy(80); instrumentation.waitForIdleSync() }
+    private fun settleFrames() {
+        compose.mainClock.advanceTimeBy(80)
+        // A posted main-thread barrier orders completed UI work without waiting
+        // for a continuously playing native renderer to become globally idle.
+        instrumentation.runOnMainSync { }
+    }
+
+    /** Must be called on the main thread; never keep an Activity reference across changes. */
+    private fun resumedActivity(): MainActivity? = ActivityLifecycleMonitorRegistry.getInstance()
+        .getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().singleOrNull()
+
+    private fun recreateVisibleActivity() {
+        var previousIdentity = 0
+        instrumentation.runOnMainSync {
+            val activity = checkNotNull(resumedActivity())
+            previousIdentity = System.identityHashCode(activity)
+            activity.recreate()
+        }
+        await("Android must really recreate and resume the background Activity") {
+            var recreated = false
+            instrumentation.runOnMainSync {
+                recreated = resumedActivity()?.let { System.identityHashCode(it) != previousIdentity } == true
+            }
+            recreated
+        }
+    }
 
     private fun await(message: String, predicate: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
