@@ -4,6 +4,18 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// CI may increase versionCode without editing source or changing package identity.
+val mdpDefaultVersionCode = 4
+val mdpDefaultVersionName = "1.0.1"
+val mdpVersionCode = providers.gradleProperty("mdpVersionCode").orNull?.let {
+    requireNotNull(it.toIntOrNull()) { "mdpVersionCode must be an integer." }
+} ?: mdpDefaultVersionCode
+require(mdpVersionCode in 1..2_100_000_000) { "mdpVersionCode must be a valid positive Android version code." }
+val mdpVersionName = providers.gradleProperty("mdpVersionName").orNull ?: mdpDefaultVersionName
+require(Regex("[0-9]+\\.[0-9]+\\.[0-9]+").matches(mdpVersionName)) {
+    "mdpVersionName must use numeric major.minor.patch format."
+}
+
 // Production signing is supplied only by the protected release environment.
 // Missing credentials must never cause a debug-signed production APK.
 val releaseKeystorePath = providers.environmentVariable("MDP_RELEASE_KEYSTORE_PATH").orNull
@@ -23,8 +35,8 @@ android {
         applicationId = "ro.mdp.remix"
         minSdk = 23
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.0"
+        versionCode = mdpVersionCode
+        versionName = mdpVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

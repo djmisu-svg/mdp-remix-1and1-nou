@@ -23,6 +23,10 @@ class LinkViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    suspend fun sharedSnapshot(): LinkLibrary = repository.sharedSnapshot()
+    suspend fun importShared(library: LinkLibrary, transferId: String) = repository.importShared(library, transferId)
+    suspend fun syncBrand(library: LinkLibrary) = repository.syncBrand(library)
+
     fun addLink(title: String, url: String, playlistId: String? = null) = perform { repository.addLink(title, url, playlistId) }
     fun renameLink(id: String, title: String) = perform { repository.renameLink(id, title) }
     fun deleteLink(id: String) = perform { repository.deleteLink(id) }

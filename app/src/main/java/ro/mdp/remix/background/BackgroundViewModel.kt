@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,6 +43,15 @@ class BackgroundViewModel(application: Application) : AndroidViewModel(applicati
             // slider frame. The visible preview remains independent of disk latency.
             dimmingRequests.receiveAsFlow().debounce(150L).collect { persistDimming(it) }
         }
+    }
+
+    suspend fun importShared(settings: BackgroundSettings) = withContext(Dispatchers.Main.immediate) {
+        // Superseded picker and slider jobs cannot overwrite the received selection.
+        selectionGeneration++
+        dimmingGeneration++
+        pendingDimming = null
+        dimmingPreview.value = null
+        repository.importShared(settings)
     }
 
     fun select(uri: Uri) {

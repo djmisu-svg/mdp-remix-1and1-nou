@@ -110,6 +110,26 @@ class BackgroundRepository(context: Context) {
         }
     }
 
+    /** Imported files are private copies exposed by our own provider, not SAF grants. */
+    suspend fun importShared(settings: BackgroundSettings) = withContext(Dispatchers.IO) {
+        initialLoad.await()
+        mutex.withLock {
+            BackgroundSettingsRules.validate(settings)
+            if (settings.kind != BackgroundKind.ORIGINAL) {
+                val uri = Uri.parse(requireNotNull(settings.uri))
+                require(uri.scheme == "content" && uri.authority == "${appContext.packageName}.mdpfiles" &&
+                    uri.path.orEmpty().matches(Regex("/media/[0-9a-f]{64}"))) {
+                    "Received backgrounds must use this installation's copied media files."
+                }
+                require(validateMedia(uri, settings.kind) == settings.kind) {
+                    "The received background type does not match its media."
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            persistAndPublish(settings)
+        }
+    }
+
     suspend fun setScale(scale: BackgroundScale) = update { it.copy(scale = scale) }
     suspend fun setDimming(value: Float, isCurrentUpdate: () -> Boolean = { true }) =
         update(isCurrentUpdate) { BackgroundSettingsRules.withDimming(it, value) }

@@ -29,6 +29,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -91,6 +92,7 @@ class BackgroundMediaTest {
     private var connection: ListenableFuture<MediaController>? = null
     private var wave: File? = null
     private var originalPreference: String? = null
+    private var originalPanelTransparency: Int? = null
     private var resizedDisplay = false
     private var watchdog: ScheduledExecutorService? = null
     private var watchdogTask: ScheduledFuture<*>? = null
@@ -105,6 +107,10 @@ class BackgroundMediaTest {
         val prefs = target.getSharedPreferences(BACKGROUND_PREFERENCES, Context.MODE_PRIVATE)
         originalPreference = prefs.getString(BACKGROUND_SETTINGS_KEY, null)
         check(prefs.edit().remove(BACKGROUND_SETTINGS_KEY).commit())
+        val appPreferences = target.getSharedPreferences("mdp_settings", Context.MODE_PRIVATE)
+        originalPanelTransparency = if (appPreferences.contains("panel_transparency")) {
+            appPreferences.getInt("panel_transparency", 0)
+        } else null
         launchApp()
         waitForTag("local_library")
         lateinit var future: ListenableFuture<MediaController>
@@ -156,6 +162,10 @@ class BackgroundMediaTest {
             val edit = prefs.edit()
             originalPreference?.let { edit.putString(BACKGROUND_SETTINGS_KEY, it) } ?: edit.remove(BACKGROUND_SETTINGS_KEY)
             check(edit.commit())
+            val panelEdit = target.getSharedPreferences("mdp_settings", Context.MODE_PRIVATE).edit()
+            originalPanelTransparency?.let { panelEdit.putInt("panel_transparency", it) }
+                ?: panelEdit.remove("panel_transparency")
+            check(panelEdit.commit())
             wave?.delete()
             if (resizedDisplay) { shell("wm size reset"); shell("wm density reset") }
         } finally {
@@ -179,6 +189,17 @@ class BackgroundMediaTest {
         })
         assertNativeFramesMove(BackgroundKind.GIF)
         assertForegroundContinues(priorAudio)
+
+        scrollSettingIntoView("panel_transparency")
+        settleFrames()
+        compose.onNodeWithTag("panel_transparency").performSemanticsAction(SemanticsActions.SetProgress) { change ->
+            assertTrue(change(100f))
+        }
+        settleFrames()
+        await("Full panel transparency must persist") {
+            target.getSharedPreferences("mdp_settings", Context.MODE_PRIVATE).getInt("panel_transparency", -1) == 100
+        }
+        compose.onNodeWithTag("panel_transparency_value").assertTextEquals("100%")
 
         setAnimation(false)
         assertBackgroundFrozen()
@@ -210,6 +231,8 @@ class BackgroundMediaTest {
         assertEquals(BackgroundScale.FILL, settings().scale)
         assertTrue(abs(settings().dimming - .72f) < .01f)
         assertTrue(settings().animationEnabled)
+        assertEquals(100, target.getSharedPreferences("mdp_settings", Context.MODE_PRIVATE).getInt("panel_transparency", -1))
+        assertNativeFramesMove(BackgroundKind.GIF)
 
         assertLifecyclePausesOnlyBackground()
         capture("phone-gif-background")

@@ -1,6 +1,6 @@
 # Android tablet: production signing setup
 
-The approved application is preserved on `feature/premium-settings-share-updates`. Production uses `ro.mdp.remix`; the independently installed Premium Test app uses `ro.mdp.remix.premiumtest`. Release metadata is prepared as **1.0.0, versionCode 3**. No production APK has been signed or published yet.
+The approved application is preserved on `feature/premium-settings-share-updates`. Production uses `ro.mdp.remix`; the independently installed Premium Test app uses `ro.mdp.remix.premiumtest`. Source release metadata is prepared as **1.0.1, versionCode 4**. The workflow allocates a higher versionCode from the last official published update manifest when needed. A production release is not ready until signing and verification succeed.
 
 No production keystore or configured release signing was found in the workspace. The connected tool cannot list your GitHub secrets, so their absence is not assumed. The setup script checks repository and environment secret **names only** in GitHub before generating a key and preserves any existing signing setup.
 
@@ -68,23 +68,29 @@ You do not need to copy/paste secret values manually. The script uses GitHub CLI
 After secrets and backups are complete, paste this into Termux to build, verify and publish the approved public release in one run:
 
 ```sh
-gh workflow run android.yml --repo djmisu-svg/mdp-remix-1and1-nou --ref feature/premium-settings-share-updates -f target=release -f publish_release=true
+gh workflow run android.yml --repo djmisu-svg/mdp-remix-1and1-nou --ref feature/premium-settings-share-updates -f target=release -f version_name=1.0.1 -f publish_release=true
 ```
 
 If you want only an Actions APK artifact without a GitHub Release, change `publish_release=true` to `publish_release=false` **before** running it. Artifacts in a public repository are accessible to GitHub users with repository access; they are not a private backup location. Run one option, not both. The registered `android.yml` entry works from the existing branch without merging PR #2. Do not merge the feature branch merely to make the new workflow appear in the Actions menu.
 
-The release workflow checks credentials/certificate before SDK setup or building, rejects Android Debug certificates, builds release unit tests/lint/APK once, and verifies the APK signature, pinned certificate, package, version, non-debuggable manifest and ZIP alignment. It uploads only the signed APK and checksum. Private temporary keys and signing diagnostics are deleted afterward. No emulator installation test is performed by this workflow.
+The release workflow checks credentials/certificate before SDK setup or building, rejects Android Debug certificates, and checks the official latest release. It automatically chooses `max(source versionCode, latest published versionCode + 1)` and rejects an existing version/tag before building. If there is a previous release, its update manifest must identify the same production certificate. It builds release unit tests/lint/APK once, then verifies the APK signature, pinned certificate, package, actual version, non-debuggable manifest and ZIP alignment. It uploads only the signed APK, checksum and `update-manifest.json` (package, version, APK size/hash and public certificate fingerprint). Private temporary keys and signing diagnostics are deleted afterward. No emulator installation test is performed by this workflow.
 
 If signing is missing or invalid, it stops without an unsigned/debug-signed production artifact. Publishing requires GitHub Actions `contents: write`; if repository/organization policy refuses it, the verified signed APK can still be downloaded from the successful build job's artifact. Do not repeatedly rerun a failed job without correcting the reported prerequisite.
 
 ## 5. Download and retain the release identity
 
-After a **successful** run, open [Actions](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions). The signed artifact is `MdP-RemiX-Premium-v1.0.0-signed`, containing `MdP-RemiX-Premium-v1.0.0.apk` and `SHA256SUMS.txt`.
+After a **successful** run, open [Actions](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions). The signed artifact is `MdP-RemiX-Premium-1.0.1-signed`, containing `MdP-RemiX-Premium-1.0.1.apk`, `SHA256SUMS.txt` and `update-manifest.json`. Future releases use their selected version in the artifact/APK name.
 
-If publication was enabled and succeeded, the release is **MdP RemiX 1&1 Premium v1.0** and the public APK address will be:
+If publication was enabled and succeeded, the release is **MdP RemiX 1&1 Premium v1.0.1** and the public APK address will be:
 
-<https://github.com/djmisu-svg/mdp-remix-1and1-nou/releases/download/v1.0.0/MdP-RemiX-Premium-v1.0.0.apk>
+<https://github.com/djmisu-svg/mdp-remix-1and1-nou/releases/download/v1.0.1/MdP-RemiX-Premium-1.0.1.apk>
 
 That address is **not available until the signed release succeeds**. Download the APK and open it from Downloads; allow installation from your browser/file manager when Android asks. If Android reports a signing conflict, retain the installed app and obtain its original signing key. Do not uninstall it if its data matters.
 
-For future updates, keep this same keystore, alias, passwords and certificate pin. Increase versionCode beyond every version already distributed; code 3 is based on this project's current code 2. Losing the signing identity prevents compatible direct-APK updates. GitHub secrets cannot be downloaded later as a backup.
+For future updates, keep this same keystore, alias, passwords and certificate pin. For each next public release choose a new version name, for example replace `version_name=1.0.1` with `version_name=1.0.2` in the same command. The workflow increases versionCode automatically from the last published manifest and serializes release runs; it never replaces a public APK. If an older public release has no update manifest, or its signing fingerprint differs, the workflow stops for verified migration rather than guessing compatibility. Losing the signing identity prevents compatible direct-APK updates. GitHub secrets cannot be downloaded later as a backup.
+
+## Installed applications and update verification
+
+The installed production app must use package `ro.mdp.remix` and the same original certificate as the new release. The in-app updater compares the downloaded APK package, higher versionCode and certificate with the installed application before offering installation; it also checks the official release manifest SHA-256 and byte size. Android then asks you to approve the update. This does not require uninstalling or clearing data.
+
+A local emulator upgrade regression with a disposable Debug/Premium Test signing identity is not proof that the owner's existing production key matches. Until the original production credentials are available and a real older production APK is tested against the new signed APK, production-key installation compatibility remains unverified. Retain the installed application, playlists, media files and original signing backup.

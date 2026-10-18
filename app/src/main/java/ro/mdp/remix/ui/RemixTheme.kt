@@ -20,6 +20,11 @@ internal val Red = Color(0xFFA60920)
 internal val Muted = Color.White.copy(alpha = 0.60f)
 internal val Hairline = Color.White.copy(alpha = 0.12f)
 val LocalEnglish = staticCompositionLocalOf { false }
+val LocalPanelTransparency = staticCompositionLocalOf { 0 }
+
+@Composable
+internal fun panelColor(base: Color = Background): Color =
+    base.copy(alpha = base.alpha * (1f - LocalPanelTransparency.current.coerceIn(0, 100) / 100f))
 
 @Composable
 fun uiText(romanian: String, english: String): String = if (LocalEnglish.current) english else romanian

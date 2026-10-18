@@ -1,5 +1,7 @@
 # Premium AKAI recorder interfaces
 
+Sharing now prepares the unchanged installed APK plus a complete portable `.mdpremix` collection (local audio, background, playlists and saved settings). Settings also includes panel transparency, the public brand library and a GitHub updater that verifies package, certificate and SHA-256 before asking Android to install. See [sharing and updates](docs/SHARING_AND_UPDATES.md) for use, verification scope and signing prerequisites. No production release is claimed without its original key and successful verification.
+
 PR #2 now includes the complete Studio, YouTube library, and Preferences redesign, with four persistently selectable AKAI recorder designs, synchronized clockwise reels, attached reel lettering, a complete MDP launcher icon and real PCM-driven stereo peak/VU meters. See [premium features and verification](docs/PREMIUM_UI.md). Download the isolated **MdP-RemiX-premiumtest** artifact from the latest successful PR build; the original application and its data stay separate.
 
 Premium background controls support selected images, real animated GIFs and muted looping videos behind the recorder. See [background behavior and missing original asset](docs/BACKGROUND_SYSTEM.md) and the separate [iOS compatibility technical plan](docs/IOS_COMPATIBILITY_PLAN.md). The original owner-selected couple GIF is absent from the repository and must be supplied; no substitute is bundled.

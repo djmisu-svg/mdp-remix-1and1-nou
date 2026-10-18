@@ -2,7 +2,7 @@ name: Android Premium Test APK
 
 on:
   push:
-    branches: ['**']
+    branches: ['main']
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -43,9 +43,20 @@ jobs:
       - name: Set up Gradle and validate wrapper
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Check out the approved previous source for the upgrade regression
+        uses: actions/checkout@v4
+        with:
+          ref: b1cebb2c9fa3a599737546fba47c45b2aee9274e
+          path: upgrade-fixture-source
+          persist-credentials: false
+
       - name: Run unit tests, Android lint and both APK builds
         id: build_apks
-        run: bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug testPremiumTestUnitTest lintPremiumTest assemblePremiumTest assemblePremiumTestAndroidTest
+        run: |
+          mkdir -p dist
+          bash upgrade-fixture-source/gradlew -p upgrade-fixture-source --no-daemon --stacktrace assemblePremiumTest
+          cp upgrade-fixture-source/app/build/outputs/apk/premiumTest/app-premiumTest.apk dist/upgrade-fixture-old.apk
+          bash ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug testPremiumTestUnitTest lintPremiumTest assemblePremiumTest assemblePremiumTestAndroidTest
 
       - name: Verify signed APK and package artifact
         id: verify_apks
@@ -104,6 +115,7 @@ jobs:
           emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
             bash tools/verify_side_by_side_install.sh dist/MdP-RemiX.apk dist/MdP-RemiX-Premium-Test.apk
+            bash tools/verify_upgrade_install.sh dist/upgrade-fixture-old.apk dist/MdP-RemiX-Premium-Test.apk
             adb shell am force-stop ro.mdp.remix
             adb shell input keyevent KEYCODE_HOME
             timeout --signal=TERM --kill-after=30s 10m bash ./gradlew --no-daemon --stacktrace connectedPremiumTestAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true || { mkdir -p dist/screenshots; adb logcat -d -t 1500 | grep -E 'ro\.mdp\.remix|AudioTrack|AudioSink|Media3|AndroidRuntime|Meter|ExoPlayer|TestRunner|PremiumUiTest|BackgroundMedia|ImageDecoder|DocumentsUI' > dist/logcat.txt || true; cat dist/logcat.txt; python3 -c 'from pathlib import Path; import xml.etree.ElementTree as ET; [print("MDP_TEST_FAILURE " + case.get("name", "") + "\n" + "".join(failure.itertext())) for path in Path("app/build/outputs/androidTest-results").rglob("*.xml") for case in ET.parse(path).getroot().iter("testcase") for failure in list(case) if failure.tag in ("failure", "error")]'; adb pull /sdcard/Android/data/ro.mdp.remix.premiumtest/files/screenshots dist/screenshots/phone || true; exit 1; }

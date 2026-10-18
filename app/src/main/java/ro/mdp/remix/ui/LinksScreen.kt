@@ -522,7 +522,7 @@ private fun LinkMusicCard(
     canMoveDown: Boolean,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    Surface(modifier = Modifier.shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Color.Black, spotColor = Color.Black), shape = RoundedCornerShape(22.dp), color = Background,
+    Surface(modifier = Modifier.shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Color.Black, spotColor = Color.Black), shape = RoundedCornerShape(22.dp), color = panelColor(),
         border = BorderStroke(1.dp, Hairline)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -591,7 +591,7 @@ private fun LinkPlaylistCard(
     canMoveUp: Boolean,
     canMoveDown: Boolean,
 ) {
-    Surface(modifier = Modifier.shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Color.Black, spotColor = Color.Black), shape = RoundedCornerShape(22.dp), color = Background, border = BorderStroke(1.dp, Hairline)) {
+    Surface(modifier = Modifier.shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = Color.Black, spotColor = Color.Black), shape = RoundedCornerShape(22.dp), color = panelColor(), border = BorderStroke(1.dp, Hairline)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.QueueMusic, null, tint = Red, modifier = Modifier.size(32.dp))

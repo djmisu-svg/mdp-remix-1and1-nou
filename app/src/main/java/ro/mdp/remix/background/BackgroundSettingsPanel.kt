@@ -45,6 +45,7 @@ import ro.mdp.remix.ui.Hairline
 import ro.mdp.remix.ui.Muted
 import ro.mdp.remix.ui.Red
 import ro.mdp.remix.ui.uiText
+import ro.mdp.remix.ui.panelColor
 import kotlin.math.roundToInt
 
 /** An opaque control panel keeps media customization readable over any image. */
@@ -89,7 +90,7 @@ fun BackgroundSettingsPanel(
     val animationLabel = uiText("Animație GIF și video", "GIF and video animation")
     Surface(
         modifier = modifier.fillMaxWidth().testTag("background_settings"),
-        color = Background, shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Hairline),
+        color = panelColor(), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Hairline),
     ) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

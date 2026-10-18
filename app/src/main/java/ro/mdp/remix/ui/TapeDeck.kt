@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -210,8 +211,9 @@ fun PremiumTapeDeck(
     val haptic = LocalHapticFeedback.current
     val controlEnabled = powered && playback.connected
     val shape = RoundedCornerShape(24.dp)
+    val panelAlpha = 1f - LocalPanelTransparency.current.coerceIn(0, 100) / 100f
     Column(
-        modifier.testTag("tape_deck").clip(shape).background(DeckBlack)
+        modifier.testTag("tape_deck").clip(shape).background(DeckBlack.copy(alpha = panelAlpha))
             .border(1.dp, Color.White.copy(alpha = .16f), shape).padding(if (compact) 12.dp else 16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -237,7 +239,7 @@ fun PremiumTapeDeck(
             Canvas(Modifier.fillMaxWidth().height(deckHeight)) {
                 val unit = size.width / 1_000f
                 scale(unit, unit, pivot = Offset.Zero) {
-                    drawFaceplate(leftRotation, rightRotation, progress, powered, design, size.height / unit)
+                    drawFaceplate(leftRotation, rightRotation, progress, powered, design, size.height / unit, panelAlpha)
                 }
             }
             Row(Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
@@ -517,13 +519,14 @@ private fun DrawScope.drawFaceplate(
     powered: Boolean,
     design: RecorderDesign,
     chassisHeight: Float,
+    panelAlpha: Float,
 ) {
     val finish = recorderFinish(design)
     val classic = design == RecorderDesign.CLASSIC
     val studio = design == RecorderDesign.STUDIO_PRO
     val red = design == RecorderDesign.RED_EDITION
     val plateRadius = if (studio) 5f else 15f
-    drawRoundRect(Brush.verticalGradient(finish.plate, 0f, chassisHeight), size = Size(1_000f, chassisHeight), cornerRadius = CornerRadius(plateRadius))
+    drawRoundRect(Brush.verticalGradient(finish.plate.map { it.copy(alpha = it.alpha * panelAlpha) }, 0f, chassisHeight), size = Size(1_000f, chassisHeight), cornerRadius = CornerRadius(plateRadius))
     drawRoundRect(finish.ink.copy(alpha = if (classic) .35f else .14f), Offset(1f, 1f), Size(998f, chassisHeight - 2f), CornerRadius(plateRadius), style = Stroke(2f))
     if (classic) {
         // Fine horizontal grain is etched into a neutral silver faceplate.
@@ -558,7 +561,7 @@ private fun DrawScope.drawFaceplate(
     drawPath(tape, Color.White.copy(alpha = .24f), style = Stroke(1f))
     drawReel(Offset(247f, 215f), 202f, .84f - progress * .35f, leftAngle, design)
     drawReel(Offset(753f, 215f), 202f, .49f + progress * .35f, rightAngle, design)
-    drawRecorderLettering(finish.ink, design)
+    drawRecorderLettering(if (classic) lerp(Color.White, finish.ink, panelAlpha) else finish.ink, design)
     for (x in listOf(354f, 646f)) {
         drawCircle(Color.Black, 28f, Offset(x, 424f))
         drawCircle(Brush.radialGradient(listOf(Color(0xFFCBCBCB), Color(0xFF2A2A2A)), Offset(x - 8, 416f), 32f), 23f, Offset(x, 422f))

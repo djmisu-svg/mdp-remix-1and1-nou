@@ -9,6 +9,7 @@ import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -18,6 +19,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +43,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import ro.mdp.remix.brand.BrandLibraryJson
+import ro.mdp.remix.brand.BrandLibraryPanel
+import ro.mdp.remix.brand.BrandLibraryViewModel
+import ro.mdp.remix.transfer.CollectionData
+import ro.mdp.remix.transfer.CollectionSharing
+import ro.mdp.remix.updates.UpdateDialog
+import ro.mdp.remix.updates.UpdateViewModel
+import ro.mdp.remix.updates.UpdateError
+import ro.mdp.remix.updates.UpdateException
+import ro.mdp.remix.updates.UpdatePhase
 import ro.mdp.remix.background.BackgroundMediaLayer
 import ro.mdp.remix.background.BackgroundSettingsPanel
 import ro.mdp.remix.background.BackgroundViewModel
@@ -52,15 +68,17 @@ import ro.mdp.remix.ui.*
 private enum class Destination(val tag: String) {
     STUDIO("nav_studio"), YOUTUBE("nav_youtube"), SETTINGS("nav_settings")
 }
-private const val RELEASES_URL = "https://github.com/djmisu-svg/mdp-remix-1and1-nou/releases"
-
 class MainActivity : ComponentActivity() {
     private val playerViewModel: PlayerViewModel by viewModels()
     private val linkViewModel: LinkViewModel by viewModels()
     private val backgroundViewModel: BackgroundViewModel by viewModels()
+    private val updateViewModel: UpdateViewModel by viewModels()
+    private val brandViewModel: BrandLibraryViewModel by viewModels()
+    private var incomingCollection by mutableStateOf<Uri?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        receiveCollectionIntent(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
@@ -71,6 +89,59 @@ class MainActivity : ComponentActivity() {
                 var english by rememberSaveable { mutableStateOf(preferences.getBoolean("english", false)) }
                 var destination by rememberSaveable { mutableStateOf(Destination.STUDIO) }
                 var externalError by rememberSaveable { mutableStateOf<String?>(null) }
+                var panelTransparency by rememberSaveable { mutableIntStateOf(preferences.getInt("panel_transparency", 0).coerceIn(0, 100)) }
+                var brandSyncEnabled by rememberSaveable { mutableStateOf(preferences.getBoolean("brand_sync_enabled", true)) }
+                var importRevision by rememberSaveable { mutableIntStateOf(0) }
+                var confirmShare by remember { mutableStateOf(false) }
+                var transferBusy by remember { mutableStateOf(false) }
+                var transferNotice by remember { mutableStateOf<String?>(null) }
+                var showUpdates by rememberSaveable { mutableStateOf(false) }
+                var installAfterDownload by rememberSaveable { mutableStateOf(false) }
+                var signingInfo by remember { mutableStateOf<String?>(null) }
+                val updateState by updateViewModel.state.collectAsStateWithLifecycle()
+                val scope = rememberCoroutineScope()
+                val sharing = remember { CollectionSharing(applicationContext) }
+                val installVerified: () -> Unit = {
+                    scope.launch {
+                        try { startActivity(updateViewModel.installationIntent()) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { updateViewModel.installationFailed(failure) }
+                    }
+                }
+                val unknownSources = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                    if (Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls()) installVerified()
+                    else updateViewModel.installationFailed(UpdateException(UpdateError.UNKNOWN_SOURCES))
+                }
+                val requestInstall: () -> Unit = {
+                    if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+                        try { unknownSources.launch(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName"))) }
+                        catch (failure: Exception) { updateViewModel.installationFailed(failure) }
+                    } else installVerified()
+                }
+                LaunchedEffect(updateState.phase, installAfterDownload, showUpdates) {
+                    if (updateState.phase == UpdatePhase.ERROR) installAfterDownload = false
+                    if (showUpdates && installAfterDownload && updateState.phase == UpdatePhase.READY) {
+                        installAfterDownload = false
+                        requestInstall()
+                    }
+                }
+                val collectionPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                    if (uri != null) incomingCollection = uri
+                }
+                val brandExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+                    if (uri != null) scope.launch {
+                        try {
+                            val library = linkViewModel.sharedSnapshot()
+                            withContext(Dispatchers.IO) {
+                                val json = BrandLibraryJson.encode(BrandLibraryJson.forPublication(library))
+                                require(json.toByteArray(Charsets.UTF_8).size <= 1_048_576) { "Biblioteca depășește limita de publicare." }
+                                checkNotNull(contentResolver.openOutputStream(uri, "wt")).use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                            }
+                            transferNotice = if (english) "Brand library exported. Publish it using the tablet guide." else "Biblioteca brandului a fost exportată. Public-o urmând ghidul pentru tabletă."
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { externalError = failure.message ?: "Export failed" }
+                    }
+                }
                 val screenStates = rememberSaveableStateHolder()
                 val backgroundSettings = backgroundViewModel.settings.collectAsStateWithLifecycle()
                 val backgroundRenderError = remember(backgroundViewModel) {
@@ -82,7 +153,7 @@ class MainActivity : ComponentActivity() {
                 val backgroundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
                     uri?.let(backgroundViewModel::select)
                 }
-                CompositionLocalProvider(LocalEnglish provides english) {
+                CompositionLocalProvider(LocalEnglish provides english, LocalPanelTransparency provides panelTransparency) {
                     BackHandler(destination == Destination.SETTINGS) { destination = Destination.STUDIO }
                     BoxWithConstraints(Modifier.fillMaxSize().background(Background)) {
                         val wide = maxWidth >= 840.dp
@@ -90,7 +161,7 @@ class MainActivity : ComponentActivity() {
                         Row(Modifier.fillMaxSize()) {
                             if (wide) NavigationRail(
                                 modifier = Modifier.fillMaxHeight().width(104.dp),
-                                containerColor = Background,
+                                containerColor = panelColor(),
                                 header = {
                                     Surface(color = Red, shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(top = 20.dp, bottom = 30.dp).size(56.dp)) {
                                         Box(contentAlignment = Alignment.Center) { Text("M", fontWeight = FontWeight.Black, fontSize = 28.sp) }
@@ -114,7 +185,7 @@ class MainActivity : ComponentActivity() {
                                 bottomBar = {
                                     if (!wide) Column {
                                         HorizontalDivider(color = Hairline)
-                                        NavigationBar(containerColor = Background, tonalElevation = 0.dp) {
+                                        NavigationBar(containerColor = panelColor(), tonalElevation = 0.dp) {
                                             Destination.entries.forEach { target ->
                                                 NavigationBarItem(
                                                     selected = destination == target,
@@ -130,7 +201,7 @@ class MainActivity : ComponentActivity() {
                                 },
                             ) { padding ->
                                 Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-                                    screenStates.SaveableStateProvider(destination.name) {
+                                    screenStates.SaveableStateProvider("${destination.name}:$importRevision") {
                                     when (destination) {
                                         Destination.STUDIO -> LocalMusicScreen()
                                         Destination.YOUTUBE -> LinksScreen(linkViewModel) { link ->
@@ -144,20 +215,29 @@ class MainActivity : ComponentActivity() {
                                             english = value
                                             preferences.edit().putBoolean("english", value).apply()
                                         }, onShare = {
-                                            val share = Intent(Intent.ACTION_SEND).apply {
-                                                type = "text/plain"
-                                                putExtra(Intent.EXTRA_TEXT, "MdP RemiX 1&1 – $RELEASES_URL")
-                                            }
-                                            openExternal(Intent.createChooser(share, if (english) "Share app" else "Distribuie aplicația")) {
-                                                externalError = if (english) "No sharing app is available." else "Nu există o aplicație pentru distribuire."
-                                            }
+                                            confirmShare = true
                                         }, onUpdates = {
-                                            openExternal(Intent(Intent.ACTION_VIEW, Uri.parse(RELEASES_URL))) {
-                                                externalError = if (english) "Install a browser to check for updates." else "Instalează un browser pentru a verifica actualizările."
-                                            }
+                                            showUpdates = true
+                                            updateViewModel.check()
                                         }, onChangeBackground = {
                                             backgroundPicker.launch(arrayOf("image/jpeg", "image/png", "image/webp", "image/gif", "video/*"))
-                                        })
+                                        }, onImportCollection = { collectionPicker.launch(arrayOf("application/vnd.mdp.remix.collection", "application/octet-stream", "application/zip")) },
+                                            panelTransparency = panelTransparency, onTransparency = { value ->
+                                                panelTransparency = value
+                                                preferences.edit().putInt("panel_transparency", value).apply()
+                                            }, brandSyncEnabled = brandSyncEnabled, onBrandSync = { value ->
+                                                brandSyncEnabled = value
+                                                preferences.edit().putBoolean("brand_sync_enabled", value).apply()
+                                                brandViewModel.setEnabled(value)
+                                            }, onSyncBrand = { brandViewModel.sync { library, _ -> linkViewModel.syncBrand(library) } },
+                                            onExportBrand = { brandExporter.launch("brand-library.json") }, onSigningInfo = {
+                                                scope.launch {
+                                                    try {
+                                                        val identity = updateViewModel.installedIdentity()
+                                                        signingInfo = "Package: ${identity.packageName}\nversionCode: ${identity.versionCode}\nSHA-256:\n${identity.certificates.joinToString("\n")}" 
+                                                    } catch (failure: Exception) { externalError = failure.message ?: "Signing identity unavailable" }
+                                                }
+                                            })
                                     }
                                     }
                                 }
@@ -167,9 +247,106 @@ class MainActivity : ComponentActivity() {
                     externalError?.let { error ->
                         AlertDialog(onDismissRequest = { externalError = null }, title = { Text(uiText("Acțiunea nu este disponibilă", "Action unavailable")) }, text = { Text(error) }, confirmButton = { TextButton(onClick = { externalError = null }) { Text(uiText("Închide", "Close")) } })
                     }
+                    if (confirmShare) AlertDialog(
+                        onDismissRequest = { confirmShare = false },
+                        title = { Text(uiText("Distribuie aplicația și colecția", "Share app and collection")) },
+                        text = { Text(uiText("Se vor trimite două fișiere: APK-ul instalat și colecția ta cu playlist-uri, muzică locală, fundal și setări. Fișierele mari pot necesita Quick Share, Bluetooth sau un serviciu de fișiere. Destinatarul instalează APK-ul și importă colecția.", "Two files will be shared: the installed APK and your collection with playlists, local music, background and settings. Large files may need Quick Share, Bluetooth or a file service. The recipient installs the APK and imports the collection.")) },
+                        confirmButton = { TextButton(onClick = {
+                            confirmShare = false
+                            transferBusy = true
+                            scope.launch {
+                                try {
+                                    backgroundViewModel.flushDimming()
+                                    val data = CollectionData(playerViewModel.sharedSnapshot(), linkViewModel.sharedSnapshot(), english,
+                                        RecorderDesignPreferences.load(applicationContext).id, backgroundViewModel.settings.value,
+                                        panelTransparency, brandSyncEnabled)
+                                    val prepared = sharing.prepareShare(data)
+                                    openExternal(Intent.createChooser(sharing.shareIntent(prepared, english),
+                                        if (english) "Share APK and collection" else "Trimite APK-ul și colecția")) {
+                                        externalError = if (english) "No app can share these files." else "Nu există o aplicație care să trimită aceste fișiere."
+                                    }
+                                } catch (cancelled: CancellationException) { throw cancelled }
+                                catch (failure: Exception) { externalError = failure.message ?: if (english) "Sharing failed." else "Distribuirea nu a reușit." }
+                                finally { transferBusy = false }
+                            }
+                        }) { Text(uiText("Pregătește și distribuie", "Prepare and share")) } },
+                        dismissButton = { TextButton(onClick = { confirmShare = false }) { Text(uiText("Anulează", "Cancel")) } },
+                    )
+                    incomingCollection?.let { uri ->
+                        if (!transferBusy) AlertDialog(
+                            onDismissRequest = { clearCollectionIntent() },
+                            title = { Text(uiText("Importă colecția primită", "Import received collection")) },
+                            text = { Text(uiText("Playlist-urile și muzica primite se adaugă la biblioteca ta. Se aplică fundalul, limba, aspectul și setările primite. Fișierele tale existente nu se șterg.", "Received playlists and music are added to your library. The received background, language, design and settings are applied. Your existing files are kept.")) },
+                            confirmButton = { TextButton(onClick = {
+                                clearCollectionIntent()
+                                transferBusy = true
+                                scope.launch {
+                                    try {
+                                        val received = sharing.receive(uri)
+                                        playerViewModel.importShared(received.data.music, received.id)
+                                        linkViewModel.importShared(received.data.youtube, received.id)
+                                        backgroundViewModel.importShared(received.data.background)
+                                        withContext(Dispatchers.IO) {
+                                            check(preferences.edit().putBoolean("english", received.data.english)
+                                                .putString("recorder_design", received.data.recorderDesignId)
+                                                .putInt("panel_transparency", received.data.panelTransparency)
+                                                .putBoolean("brand_sync_enabled", received.data.brandSyncEnabled).commit())
+                                        }
+                                        english = received.data.english
+                                        panelTransparency = received.data.panelTransparency
+                                        brandSyncEnabled = received.data.brandSyncEnabled
+                                        brandViewModel.setEnabled(brandSyncEnabled)
+                                        importRevision++
+                                        destination = Destination.STUDIO
+                                        transferNotice = if (english) "Collection imported. Music and background are saved on this device." else "Colecția a fost importată. Muzica și fundalul sunt salvate pe acest dispozitiv."
+                                    } catch (cancelled: CancellationException) { throw cancelled }
+                                    catch (failure: Exception) { externalError = (if (english) "Import did not finish. Your existing library was kept. " else "Importul nu s-a încheiat. Biblioteca existentă a fost păstrată. ") + failure.message.orEmpty() }
+                                    finally { transferBusy = false }
+                                }
+                            }) { Text(uiText("Importă", "Import")) } },
+                            dismissButton = { TextButton(onClick = { clearCollectionIntent() }) { Text(uiText("Anulează", "Cancel")) } },
+                        )
+                    }
+                    if (transferBusy) AlertDialog(onDismissRequest = {}, title = { Text(uiText("Se pregătesc fișierele…", "Preparing files…")) },
+                        text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text(uiText("Muzica și fundalul sunt copiate. Păstrează aplicația deschisă până la finalizare.", "Music and background are being copied. Keep the app open until this finishes."))
+                        } }, confirmButton = {})
+                    transferNotice?.let { notice -> AlertDialog(onDismissRequest = { transferNotice = null },
+                        title = { Text(uiText("MdP RemiX 1&1", "MdP RemiX 1&1")) }, text = { Text(notice) },
+                        confirmButton = { TextButton(onClick = { transferNotice = null }) { Text(uiText("Închide", "Close")) } }) }
+                    if (showUpdates) UpdateDialog(updateState, { showUpdates = false; installAfterDownload = false }, updateViewModel::check,
+                        { installAfterDownload = true; updateViewModel.download() }, requestInstall,
+                        { installAfterDownload = false; updateViewModel.cancel() })
+                    signingInfo?.let { details -> AlertDialog(onDismissRequest = { signingInfo = null },
+                        title = { Text(uiText("Identitatea aplicației instalate", "Installed application identity")) },
+                        text = { SelectionContainer { Text(details, style = MaterialTheme.typography.bodySmall) } },
+                        confirmButton = { TextButton(onClick = { signingInfo = null }) { Text(uiText("Închide", "Close")) } }) }
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        receiveCollectionIntent(intent)
+    }
+
+    private fun receiveCollectionIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW && intent.data?.scheme == "content") incomingCollection = intent.data
+    }
+
+    private fun clearCollectionIntent() {
+        incomingCollection = null
+        if (intent?.action == Intent.ACTION_VIEW) setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val enabled = getSharedPreferences("mdp_settings", Context.MODE_PRIVATE).getBoolean("brand_sync_enabled", true)
+        brandViewModel.setEnabled(enabled)
+        if (enabled) brandViewModel.syncIfDue { library, _ -> linkViewModel.syncBrand(library) }
     }
 
     private fun openExternal(intent: Intent, onFailure: () -> Unit) {
@@ -194,7 +371,9 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun PreferencesScreen(english: Boolean, onLanguage: (Boolean) -> Unit, onShare: () -> Unit, onUpdates: () -> Unit, onChangeBackground: () -> Unit) {
+    private fun PreferencesScreen(english: Boolean, onLanguage: (Boolean) -> Unit, onShare: () -> Unit, onUpdates: () -> Unit,
+        onChangeBackground: () -> Unit, onImportCollection: () -> Unit, panelTransparency: Int, onTransparency: (Int) -> Unit,
+        brandSyncEnabled: Boolean, onBrandSync: (Boolean) -> Unit, onSyncBrand: () -> Unit, onExportBrand: () -> Unit, onSigningInfo: () -> Unit) {
         val backgroundSettings by backgroundViewModel.settings.collectAsStateWithLifecycle()
         val backgroundLoading by backgroundViewModel.loading.collectAsStateWithLifecycle()
         val originalAvailable by backgroundViewModel.originalAvailable.collectAsStateWithLifecycle()
@@ -218,7 +397,18 @@ class MainActivity : ComponentActivity() {
                     onClearError = backgroundViewModel::clearError,
                     onDimmingFinished = backgroundViewModel::flushDimming,
                 )
-                Surface(shape = RoundedCornerShape(24.dp), color = Background, border = BorderStroke(1.dp, Hairline)) {
+                Surface(shape = RoundedCornerShape(24.dp), color = panelColor(), border = BorderStroke(1.dp, Hairline)) {
+                    Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(uiText("Transparența panourilor", "Panel transparency"), style = MaterialTheme.typography.titleLarge)
+                        Text("$panelTransparency%", color = Muted, modifier = Modifier.testTag("panel_transparency_value"))
+                        Slider(value = panelTransparency.toFloat(), onValueChange = { onTransparency(it.toInt().coerceIn(0, 100)) },
+                            valueRange = 0f..100f, modifier = Modifier.fillMaxWidth().testTag("panel_transparency"))
+                        Text(uiText("0%: panouri opace. 100%: fundal vizibil prin panouri. Comenzile și instrumentele rămân vizibile.",
+                            "0%: opaque panels. 100%: background visible through panels. Controls and instruments remain visible."), color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                BrandLibraryPanel(brandViewModel, brandSyncEnabled, onBrandSync, onSyncBrand, onExportBrand)
+                Surface(shape = RoundedCornerShape(24.dp), color = panelColor(), border = BorderStroke(1.dp, Hairline)) {
                     Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Language, null, tint = Color.White)
@@ -232,34 +422,41 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-                Surface(shape = RoundedCornerShape(24.dp), color = Background, border = BorderStroke(1.dp, Hairline)) {
+                Surface(shape = RoundedCornerShape(24.dp), color = panelColor(), border = BorderStroke(1.dp, Hairline)) {
                     Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                         Icon(Icons.Default.Share, null, tint = Red, modifier = Modifier.size(28.dp))
                         Text(uiText("Sunetul merge mai departe.", "Good sound travels."), style = MaterialTheme.typography.titleLarge)
-                        Text(uiText("Distribuie MdP RemiX 1&1 prin aplicațiile tale preferate. Biblioteca personală nu este distribuită.", "Share MdP RemiX 1&1 through your favorite apps. Your personal library stays private."), color = Muted)
+                        Text(uiText("Trimite APK-ul real și colecția ta: playlist-uri, linkuri YouTube, muzică locală, fundal și setări. Destinatarul instalează aplicația și importă fișierul .mdpremix.", "Send the actual APK and your collection: playlists, YouTube links, local music, background and settings. The recipient installs the app and imports the .mdpremix file."), color = Muted)
                         Button(onClick = onShare, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("share_app"), shape = RoundedCornerShape(14.dp)) {
                             Text(uiText("Distribuie aplicația", "Share app")); Spacer(Modifier.width(10.dp)); Icon(Icons.Default.ArrowOutward, null, Modifier.size(18.dp))
                         }
+                        OutlinedButton(onClick = onImportCollection, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("import_collection")) {
+                            Text(uiText("Importă colecția primită", "Import received collection"))
+                        }
                     }
                 }
-                Surface(shape = RoundedCornerShape(24.dp), color = Background, border = BorderStroke(1.dp, Hairline)) {
+                Surface(shape = RoundedCornerShape(24.dp), color = panelColor(), border = BorderStroke(1.dp, Hairline)) {
                     Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.SystemUpdate, null, tint = Red)
                             Spacer(Modifier.width(12.dp)); Text(uiText("Rămâi în ritm.", "Stay in the loop."), style = MaterialTheme.typography.titleLarge)
                         }
-                        Text(uiText("Vezi versiunile publicate pe GitHub. Orice instalare cere confirmarea Android.", "View published releases on GitHub. Android asks you to confirm any installation."), color = Muted)
+                        Text(uiText("Verifică versiunea oficială, descarcă APK-ul verificat și confirmă actualizarea în Android. Datele sunt păstrate când pachetul și semnătura corespund.", "Check the official version, download the verified APK and confirm the update in Android. Data is kept when package and signature match."), color = Muted)
                         OutlinedButton(onClick = onUpdates, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("check_updates"), shape = RoundedCornerShape(14.dp)) { Text(uiText("Verifică actualizări", "Check for updates"), color = Color.White) }
+                        TextButton(onClick = onSigningInfo, modifier = Modifier.fillMaxWidth().testTag("signing_identity")) {
+                            Text(uiText("Identitatea aplicației instalate", "Installed application identity"))
+                        }
                     }
                 }
-                Text((if (packageName.endsWith(".premiumtest")) "PREMIUM TEST" else "PREMIUM") + " / 1.1.0", style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.padding(bottom = 16.dp))
+                Text((if (packageName.endsWith(".premiumtest")) "PREMIUM TEST" else "PREMIUM") + " / " + packageManager.getPackageInfo(packageName, 0).versionName,
+                    style = MaterialTheme.typography.labelSmall, color = Muted, modifier = Modifier.padding(bottom = 16.dp))
             }
         }
     }
 
     @Composable
     private fun LanguageChoice(label: String, active: Boolean, modifier: Modifier, onClick: () -> Unit) {
-        Surface(onClick = onClick, modifier = modifier.semantics { selected = active }, color = if (active) Red.copy(alpha = 0.18f) else Background, border = BorderStroke(if (active) 2.dp else 1.dp, if (active) Red else Hairline), shape = RoundedCornerShape(14.dp)) {
+        Surface(onClick = onClick, modifier = modifier.semantics { selected = active }, color = if (active) Red.copy(alpha = 0.18f) else panelColor(), border = BorderStroke(if (active) 2.dp else 1.dp, if (active) Red else Hairline), shape = RoundedCornerShape(14.dp)) {
             Row(Modifier.padding(horizontal = 14.dp, vertical = 18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(label, fontWeight = FontWeight.SemiBold)
                 if (active) Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(18.dp))

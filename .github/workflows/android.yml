@@ -10,6 +10,10 @@ on:
         type: choice
         options: [premium-test, release]
         default: premium-test
+      version_name:
+        description: 'Production version (major.minor.patch); blank uses the source default'
+        type: string
+        default: ''
       publish_release:
         description: 'Publish the verified production APK publicly'
         type: boolean
@@ -29,5 +33,6 @@ jobs:
       contents: write
     uses: ./.github/workflows/release.yml
     with:
+      version_name: ${{ inputs.version_name }}
       publish_release: ${{ inputs.publish_release }}
     secrets: inherit

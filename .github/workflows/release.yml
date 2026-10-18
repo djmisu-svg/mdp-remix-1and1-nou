@@ -3,13 +3,22 @@ name: Signed Android Production Release
 on:
   workflow_dispatch:
     inputs:
+      version_name:
+        description: 'Release version (major.minor.patch); blank uses the current source default'
+        type: string
+        required: false
+        default: ''
       publish_release:
-        description: 'Publish the verified APK as MdP RemiX 1&1 Premium v1.0'
+        description: 'Publish the verified production APK and update manifest'
         type: boolean
         required: true
         default: false
   workflow_call:
     inputs:
+      version_name:
+        type: string
+        required: false
+        default: ''
       publish_release:
         type: boolean
         required: false
@@ -19,15 +28,19 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-production-release-v1
+  group: android-production-release
   cancel-in-progress: false
 
 jobs:
   signed_apk:
-    name: Build and verify production-signed v1.0.0 APK
+    name: Build and verify production-signed update APK
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: android-production
+    outputs:
+      version_name: ${{ steps.release_metadata.outputs.version_name }}
+      version_code: ${{ steps.release_metadata.outputs.version_code }}
+      artifact_name: ${{ steps.release_metadata.outputs.artifact_name }}
     permissions:
       contents: read
     steps:
@@ -108,6 +121,83 @@ jobs:
               sys.exit('Android Debug certificates cannot sign a production release.')
           PY
 
+      - name: Allocate a monotonic version and verify the official release identity
+        id: release_metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION_INPUT: ${{ inputs.version_name }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import json, os, pathlib, re, sys, urllib.error, urllib.parse, urllib.request
+          repository = 'djmisu-svg/mdp-remix-1and1-nou'
+          if os.environ['GITHUB_REPOSITORY'] != repository:
+              sys.exit('Production releases are restricted to the official application repository.')
+          def api(path, missing=False):
+              request = urllib.request.Request('https://api.github.com/repos/' + repository + path,
+                  headers={'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'MdP-Release-Verification'})
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  if missing and error.code == 404:
+                      return None
+                  sys.exit('Official release lookup failed (HTTP ' + str(error.code) + '); no version was allocated.')
+              except (OSError, ValueError):
+                  sys.exit('Official release lookup failed; check connectivity before retrying.')
+          repo = api('')
+          if repo.get('full_name') != repository or repo.get('private'):
+              sys.exit('Expected the official public application repository.')
+          source = pathlib.Path('app/build.gradle.kts').read_text()
+          code_match = re.search(r'val mdpDefaultVersionCode = (\d+)', source)
+          name_match = re.search(r'val mdpDefaultVersionName = "([0-9]+\.[0-9]+\.[0-9]+)"', source)
+          if not code_match or not name_match:
+              sys.exit('Source release defaults are missing or invalid.')
+          version_name = os.environ.get('RELEASE_VERSION_INPUT', '').strip() or name_match.group(1)
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version_name):
+              sys.exit('Release version must use numeric major.minor.patch format.')
+          tag = 'v' + version_name
+          if api('/releases/tags/' + tag, missing=True) is not None or api('/git/ref/tags/' + tag, missing=True) is not None:
+              sys.exit('That release or tag already exists. Choose a new version; published APKs are never overwritten.')
+          version_code = int(code_match.group(1))
+          latest = api('/releases/latest', missing=True)
+          if latest is not None:
+              if latest.get('draft') or latest.get('prerelease'):
+                  sys.exit('The stable release lookup returned an invalid release.')
+              assets = [asset for asset in latest.get('assets', []) if asset.get('name') == 'update-manifest.json']
+              if len(assets) != 1:
+                  sys.exit('The current public release has no unique update-manifest.json. Verify its version and signing identity before migrating.')
+              asset = assets[0]
+              expected = 'https://github.com/' + repository + '/releases/download/' + urllib.parse.quote(latest['tag_name'], safe='') + '/update-manifest.json'
+              if asset.get('browser_download_url') != expected or not 0 < asset.get('size', 0) <= 32768:
+                  sys.exit('The previous update manifest is not an official bounded release asset.')
+              try:
+                  request = urllib.request.Request(expected, headers={'User-Agent': 'MdP-Release-Verification'})
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      encoded = response.read(32769)
+                  if len(encoded) > 32768:
+                      raise ValueError('oversized manifest')
+                  manifest = json.loads(encoded)
+              except (OSError, ValueError):
+                  sys.exit('The previous public update manifest could not be verified; no release will be built.')
+              if manifest.get('schemaVersion') != 1 or manifest.get('packageName') != 'ro.mdp.remix' or type(manifest.get('versionCode')) is not int or manifest['versionCode'] < 1:
+                  sys.exit('The previous official update manifest has invalid package/version metadata.')
+              pin = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'mdp-release-private/expected-sha256.txt').read_text().lower()
+              if manifest.get('certificateSha256', '').lower() != pin:
+                  sys.exit('The supplied production key differs from the last public release. Do not publish an incompatible update.')
+              version_code = max(version_code, manifest['versionCode'] + 1)
+          if not 1 <= version_code <= 2100000000:
+              sys.exit('No valid higher Android versionCode is available.')
+          artifact_name = 'MdP-RemiX-Premium-' + version_name + '-signed'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('version_name=' + version_name + '\nversion_code=' + str(version_code) + '\nartifact_name=' + artifact_name + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('MDP_VERSION_NAME=' + version_name + '\nMDP_VERSION_CODE=' + str(version_code) + '\n')
+          print('Prepared production version ' + version_name + ' (' + str(version_code) + '). No private signing data is logged.')
+          PYCODE
+
       - name: Set up pinned Android SDK packages
         uses: android-actions/setup-android@v3
         with:
@@ -128,6 +218,7 @@ jobs:
           set -euo pipefail
           # Keep signing diagnostics private; do not upload build logs or Gradle caches.
           if ! bash ./gradlew --no-daemon --console=plain --quiet \
+              -PmdpVersionCode="$MDP_VERSION_CODE" -PmdpVersionName="$MDP_VERSION_NAME" \
               testReleaseUnitTest lintRelease assembleRelease \
               > "$RUNNER_TEMP/mdp-release-private/gradle.log" 2>&1; then
             echo '::error::Release build, unit tests or lint failed. No production APK will be published. Check signing secrets and source before retrying.'
@@ -152,7 +243,7 @@ jobs:
           directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'mdp-release-private'
           badging = (directory / 'badging.txt').read_text()
           package = re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", badging, re.M)
-          if not package or package.groups() != ('ro.mdp.remix', '3', '1.0.0'):
+          if not package or package.groups() != ('ro.mdp.remix', os.environ['MDP_VERSION_CODE'], os.environ['MDP_VERSION_NAME']):
               sys.exit('Release package or version is incorrect.')
           if "application-label:'MdP RemiX 1&1'" not in badging or 'application-debuggable' in badging:
               sys.exit('Release label or debuggable status is incorrect.')
@@ -166,21 +257,34 @@ jobs:
               sys.exit('Debug-signed APK rejected.')
           PY
           mkdir -p dist-release
-          cp "$apk" dist-release/MdP-RemiX-Premium-v1.0.0.apk
-          (cd dist-release && sha256sum MdP-RemiX-Premium-v1.0.0.apk > SHA256SUMS.txt)
+          cp "$apk" "dist-release/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk"
+          python3 - <<'PYCODE'
+          import hashlib, json, os, pathlib
+          directory = pathlib.Path('dist-release')
+          apk = directory / ('MdP-RemiX-Premium-' + os.environ['MDP_VERSION_NAME'] + '.apk')
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+          pin = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'mdp-release-private/expected-sha256.txt').read_text().lower()
+          manifest = {'schemaVersion': 1, 'packageName': 'ro.mdp.remix',
+              'versionCode': int(os.environ['MDP_VERSION_CODE']), 'versionName': os.environ['MDP_VERSION_NAME'],
+              'apkName': apk.name, 'sha256': digest, 'certificateSha256': pin, 'sizeBytes': apk.stat().st_size}
+          (directory / 'update-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          (directory / 'SHA256SUMS.txt').write_text(digest + '  ' + apk.name + '\n')
+          PYCODE
           {
             echo '### Production release verification'
-            echo 'Signed APK, pinned certificate, package ro.mdp.remix, version 1.0.0 (3), non-debuggable manifest and ZIP alignment verified.'
+            echo "Signed APK, pinned certificate, package ro.mdp.remix, version $MDP_VERSION_NAME ($MDP_VERSION_CODE), non-debuggable manifest and ZIP alignment verified."
             echo 'Release unit tests and Android lint passed. Device installation was not performed by this workflow.'
+            echo 'update-manifest.json records the verified APK hash, byte size, version and production certificate for in-app updates.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload verified production APK only
         uses: actions/upload-artifact@v4
         with:
-          name: MdP-RemiX-Premium-v1.0.0-signed
+          name: ${{ steps.release_metadata.outputs.artifact_name }}
           path: |
-            dist-release/MdP-RemiX-Premium-v1.0.0.apk
+            dist-release/*.apk
             dist-release/SHA256SUMS.txt
+            dist-release/update-manifest.json
           if-no-files-found: error
           retention-days: 30
 
@@ -203,31 +307,41 @@ jobs:
       - name: Download only the verified release artifact
         uses: actions/download-artifact@v4
         with:
-          name: MdP-RemiX-Premium-v1.0.0-signed
+          name: ${{ needs.signed_apk.outputs.artifact_name }}
           path: dist-release
 
-      - name: Publish MdP RemiX 1&1 Premium v1.0
+      - name: Publish the verified official update
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          MDP_VERSION_NAME: ${{ needs.signed_apk.outputs.version_name }}
+          MDP_VERSION_CODE: ${{ needs.signed_apk.outputs.version_code }}
         run: |
           set -euo pipefail
+          test "$GH_REPO" = 'djmisu-svg/mdp-remix-1and1-nou'
           (cd dist-release && sha256sum -c SHA256SUMS.txt)
-          if gh release view v1.0.0 > /dev/null 2>&1; then
-            echo '::error::Release v1.0.0 already exists. Existing production releases will not be overwritten.'
+          tag="v$MDP_VERSION_NAME"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo '::error::The release already exists. Existing production releases will not be overwritten.'
             exit 1
           fi
-          cat > release-notes.txt <<'NOTES'
-          MdP RemiX 1&1 Premium v1.0
-
-          Download MdP-RemiX-Premium-v1.0.0.apk below and open it on Android 6.0 or newer. Allow installation from your browser or file manager when Android asks.
-
-          Package: ro.mdp.remix. Version: 1.0.0 (3). Production-signed APK; release unit tests, lint, certificate, package and alignment checks passed. This release workflow does not perform device installation tests.
-
-          Compatible updates require the same production signing key. The separately installed Premium Test application remains independent. If Android reports a signing conflict with an existing ro.mdp.remix installation, do not uninstall it if its data must be retained; obtain an update signed by its original key.
-          NOTES
-          gh release create v1.0.0 --target "$GITHUB_SHA" --title 'MdP RemiX 1&1 Premium v1.0' --notes-file release-notes.txt --draft
-          gh release upload v1.0.0 dist-release/MdP-RemiX-Premium-v1.0.0.apk dist-release/SHA256SUMS.txt
-          gh release edit v1.0.0 --draft=false --latest
-          echo "Release download: https://github.com/$GH_REPO/releases/download/v1.0.0/MdP-RemiX-Premium-v1.0.0.apk" >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PYCODE'
+          import os, pathlib
+          name, code = os.environ['MDP_VERSION_NAME'], os.environ['MDP_VERSION_CODE']
+          notes = (f'MdP RemiX 1&1 Premium v{name}\n\n'
+              f'Download MdP-RemiX-Premium-{name}.apk and open it on Android 6.0 or newer. '
+              'Allow installation from your browser or file manager when Android asks.\n\n'
+              f'Package: ro.mdp.remix. Version: {name} ({code}). '
+              'Production signature, certificate identity, package, non-debuggable manifest, ZIP alignment, unit tests and lint verified. '
+              'This workflow does not claim a physical-device installation test.\n\n'
+              'For an existing production installation, install this APK as an update without uninstalling. '
+              'The package and original signing key must match. Keep your signing keystore and encrypted backup for all future updates. '
+              'Premium Test remains a separate application.\n\n'
+              'The official update-manifest.json contains the APK SHA-256, size and signing-certificate fingerprint.\n')
+          pathlib.Path('release-notes.txt').write_text(notes)
+          PYCODE
+          gh release create "$tag" --target "$GITHUB_SHA" --title "MdP RemiX 1&1 Premium v$MDP_VERSION_NAME" --notes-file release-notes.txt --draft
+          gh release upload "$tag" "dist-release/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk" dist-release/SHA256SUMS.txt dist-release/update-manifest.json
+          gh release edit "$tag" --draft=false --latest
+          echo "Release download: https://github.com/$GH_REPO/releases/download/$tag/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk" >> "$GITHUB_STEP_SUMMARY"
