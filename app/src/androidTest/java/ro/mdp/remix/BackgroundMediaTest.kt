@@ -405,10 +405,33 @@ class BackgroundMediaTest {
     }
 
     private fun assertBackgroundFrozen() {
-        realWait(240)
-        val before = BackgroundMediaDiagnostics.state.value
+        // ExoPlayer acknowledges a lifecycle pause on its playback thread. Its
+        // final position event can reach main after isPlaying has become false;
+        // a fixed delay can therefore compare the last frame's stale position
+        // with the final paused position. Drain main callbacks and require an
+        // exact, bounded settling interval before measuring the frozen window.
+        val deadline = SystemClock.uptimeMillis() + 3_000
+        var before = BackgroundMediaDiagnostics.state.value
+        var stableSince = SystemClock.uptimeMillis()
+        var settled = false
+        while (SystemClock.uptimeMillis() < deadline) {
+            var current = before
+            instrumentation.runOnMainSync { current = BackgroundMediaDiagnostics.state.value }
+            val now = SystemClock.uptimeMillis()
+            if (current.playing || before.playing || current.frameCount != before.frameCount || current.positionMs != before.positionMs) {
+                stableSince = now
+            }
+            before = current
+            if (!current.playing && now - stableSince >= 600) {
+                settled = true
+                break
+            }
+            realWait(40)
+        }
+        assertTrue("Native pause must settle within three seconds; background=$before", settled)
         realWait(320)
-        val after = BackgroundMediaDiagnostics.state.value
+        var after = before
+        instrumentation.runOnMainSync { after = BackgroundMediaDiagnostics.state.value }
         assertTrue("Animation must really pause", !after.playing)
         assertEquals("Paused native animation must not submit new frames", before.frameCount, after.frameCount)
         assertEquals("Paused video position must freeze", before.positionMs, after.positionMs)
