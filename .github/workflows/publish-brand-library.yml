@@ -1,0 +1,88 @@
+name: Publish MdP playlist library
+
+on:
+  push:
+    branches:
+      - feature/premium-settings-share-updates
+    paths:
+      - catalog/brand-library.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mdp-brand-playlist-library
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Validate and publish public playlist catalog
+    if: github.repository == 'djmisu-svg/mdp-remix-1and1-nou' && github.ref == 'refs/heads/feature/premium-settings-share-updates'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate schema, links and public-only data
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, re, urllib.parse, uuid
+          path = pathlib.Path('catalog/brand-library.json')
+          assert 0 < path.stat().st_size <= 1048576, 'Catalog must be under 1 MiB'
+          content = json.loads(path.read_text(encoding='utf-8'))
+          assert set(content) == {'schemaVersion', 'revision', 'library'}
+          assert type(content['schemaVersion']) is int and content['schemaVersion'] == 1
+          uuid.UUID(content['revision'])
+          lib = content['library']
+          assert set(lib) == {'version', 'links', 'playlists'} and lib['version'] == 1
+          assert isinstance(lib['links'], list) and isinstance(lib['playlists'], list)
+          ids, urls, playlist_ids = set(), set(), set()
+          for item in lib['links']:
+              assert set(item) == {'id', 'title', 'url', 'kind', 'favorite', 'addedAt', 'lastOpenedAt'}
+              assert all(isinstance(item[k], str) and item[k] for k in ('id','title','url'))
+              assert item['id'] not in ids
+              ids.add(item['id'])
+              url = urllib.parse.urlparse(item['url'])
+              assert url.scheme == 'https' and url.hostname == 'www.youtube.com' and url.path == '/playlist'
+              assert not url.username and not url.password and url.port is None
+              query = urllib.parse.parse_qs(url.query)
+              assert len(query) == 1 and 'list' in query and len(query['list']) == 1
+              assert re.fullmatch(r'[A-Za-z0-9_-]{2,128}', query['list'][0])
+              assert item['url'] not in urls
+              urls.add(item['url'])
+              assert item['kind'] == 'YOUTUBE_PLAYLIST'
+              assert type(item['favorite']) is bool and item['addedAt'] == item['lastOpenedAt'] == 0
+          for item in lib['playlists']:
+              assert set(item) == {'id', 'name', 'linkIds', 'favorite', 'createdAt', 'lastOpenedAt'}
+              assert isinstance(item['id'], str) and item['id'] and item['id'] not in playlist_ids
+              playlist_ids.add(item['id'])
+              assert isinstance(item['name'], str) and 0 < len(item['name']) <= 80
+              assert isinstance(item['linkIds'], list) and item['linkIds']
+              assert all(isinstance(value, str) and value in ids for value in item['linkIds'])
+              assert type(item['favorite']) is bool and item['createdAt'] == item['lastOpenedAt'] == 0
+          assert len(ids) == 3 and len(playlist_ids) == 3
+          print('Validated 3 public YouTube playlists')
+          PY
+      - name: Create or update dedicated prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo='djmisu-svg/mdp-remix-1and1-nou'
+          tag='brand-library'
+          if gh release view "$tag" --repo "$repo" --json isPrerelease,isDraft > "$RUNNER_TEMP/mdp-brand-release.json" 2>/dev/null; then
+            python3 - "$RUNNER_TEMP/mdp-brand-release.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding='utf-8') as file:
+              release = json.load(file)
+          assert release['isPrerelease'] and not release['isDraft'], 'Refusing to overwrite a stable or draft release'
+          PY
+          else
+            gh release create "$tag" --repo "$repo" --target "$GITHUB_SHA" --prerelease --latest=false --title 'MdP RemiX - Biblioteca oficiala' --notes 'Playlisturi YouTube publice sincronizate in aplicatia MdP RemiX 1&1. Nu contine fisiere audio sau date personale.'
+          fi
+          gh release upload "$tag" catalog/brand-library.json --repo "$repo" --clobber
+          gh release view "$tag" --repo "$repo" --json url,assets
