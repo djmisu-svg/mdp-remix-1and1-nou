@@ -5,8 +5,8 @@ plugins {
 }
 
 // CI may increase versionCode without editing source or changing package identity.
-val mdpDefaultVersionCode = 4
-val mdpDefaultVersionName = "1.0.1"
+val mdpDefaultVersionCode = 5
+val mdpDefaultVersionName = "1.0.2"
 val mdpVersionCode = providers.gradleProperty("mdpVersionCode").orNull?.let {
     requireNotNull(it.toIntOrNull()) { "mdpVersionCode must be an integer." }
 } ?: mdpDefaultVersionCode
