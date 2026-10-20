@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "revision": "86cc3efe-042c-475d-9056-5938ae3c5484",
+  "library": {
+    "version": 1,
+    "links": [
+      {
+        "id": "yt-mdp-romania",
+        "title": "MdP RemiX 1&1 România",
+        "url": "https://www.youtube.com/playlist?list=PLW8xS-zN8EvNkffKAr5JGNLIIM9NnNTK-",
+        "kind": "YOUTUBE_PLAYLIST",
+        "favorite": false,
+        "addedAt": 0,
+        "lastOpenedAt": 0
+      },
+      {
+        "id": "yt-mdp-pentru-suflet",
+        "title": "MdP pentru suflet",
+        "url": "https://www.youtube.com/playlist?list=PL4iefrx4Js8_qtSHc4TFe0gO68WrikIq_",
+        "kind": "YOUTUBE_PLAYLIST",
+        "favorite": false,
+        "addedAt": 0,
+        "lastOpenedAt": 0
+      },
+      {
+        "id": "yt-mdp-disco-megamix",
+        "title": "MdP 1&1 DISCO REMIX & MEGAMIX",
+        "url": "https://www.youtube.com/playlist?list=PLvmMBpWS-Y6eXdnVGrJJqa_bEOnsfORsQ",
+        "kind": "YOUTUBE_PLAYLIST",
+        "favorite": false,
+        "addedAt": 0,
+        "lastOpenedAt": 0
+      }
+    ],
+    "playlists": [
+      {
+        "id": "playlist-mdp-romania",
+        "name": "MdP RemiX 1&1 România",
+        "linkIds": [
+          "yt-mdp-romania"
+        ],
+        "favorite": false,
+        "createdAt": 0,
+        "lastOpenedAt": 0
+      },
+      {
+        "id": "playlist-mdp-pentru-suflet",
+        "name": "MdP pentru suflet",
+        "linkIds": [
+          "yt-mdp-pentru-suflet"
+        ],
+        "favorite": false,
+        "createdAt": 0,
+        "lastOpenedAt": 0
+      },
+      {
+        "id": "playlist-mdp-disco-megamix",
+        "name": "MdP 1&1 DISCO REMIX & MEGAMIX",
+        "linkIds": [
+          "yt-mdp-disco-megamix"
+        ],
+        "favorite": false,
+        "createdAt": 0,
+        "lastOpenedAt": 0
+      }
+    ]
+  }
+}

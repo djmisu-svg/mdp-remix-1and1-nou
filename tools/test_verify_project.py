@@ -107,6 +107,83 @@ class ProjectVerifierTests(unittest.TestCase):
         self.assert_detected(verifier.check_resources_and_manifest,
                              "Missing permission: FOREGROUND_SERVICE_MEDIA_PLAYBACK")
 
+    def test_rejects_changing_production_application_id(self):
+        self.assertEqual([], self.run_check(verifier.check_versions_and_wrapper))
+        self.replace("app/build.gradle.kts", 'applicationId = "ro.mdp.remix"',
+                     'applicationId = "ro.mdp.remix.premiumtest"')
+        self.assert_detected(verifier.check_versions_and_wrapper,
+                             "Production applicationId must remain ro.mdp.remix")
+
+    def test_rejects_missing_premium_test_application_suffix(self):
+        self.assertEqual([], self.run_check(verifier.check_versions_and_wrapper))
+        self.replace("app/build.gradle.kts", 'applicationIdSuffix = ".premiumtest"',
+                     'applicationIdSuffix = ""')
+        self.assert_detected(verifier.check_versions_and_wrapper,
+                             "premiumTest must declare applicationIdSuffix .premiumtest")
+
+    def test_rejects_misleading_premium_test_label(self):
+        self.assertEqual([], self.run_check(verifier.check_resources_and_manifest))
+        self.replace("app/src/premiumTest/res/values/strings.xml", "MdP RemiX Premium Test",
+                     "MdP RemiX 1&amp;1")
+        self.assert_detected(verifier.check_resources_and_manifest,
+                             "Premium test label must be MdP RemiX Premium Test")
+
+    def test_rejects_instrumentation_targeting_production_debug_app(self):
+        self.assertEqual([], self.run_check(verifier.check_versions_and_wrapper))
+        self.replace("app/build.gradle.kts", 'testBuildType = "premiumTest"',
+                     'testBuildType = "debug"')
+        self.assert_detected(verifier.check_versions_and_wrapper,
+                             "instrumentation targets premiumTest")
+
+    def test_rejects_missing_emulator_ui_test_execution(self):
+        self.assertEqual([], self.run_check(verifier.check_workflow))
+        self.replace(".github/workflows/build.yml",
+                     "bash ./gradlew --no-daemon --stacktrace connectedPremiumTestAndroidTest",
+                     "true")
+        self.assert_detected(verifier.check_workflow,
+                             "CI must execute Premium Test instrumentation")
+
+    def test_rejects_screenshot_data_in_logs(self):
+        workflow = self.fixture / ".github/workflows/build.yml"
+        original = workflow.read_text(encoding="utf-8")
+        for command in (
+            "base64 dist/screenshots/phone/phone-studio.jpg",
+            "cat dist/screenshots/tablet-studio.png",
+            "adb exec-out screencap -p",
+        ):
+            with self.subTest(command=command):
+                workflow.write_text(original + "\n      - name: Invalid image logging\n        run: " + command + "\n",
+                                    encoding="utf-8")
+                errors = self.run_check(verifier.check_workflow)
+                self.assertTrue(any("logs" in error for error in errors), errors)
+
+    def test_rejects_apk_upload_after_emulator_tests(self):
+        workflow = self.fixture / ".github/workflows/build.yml"
+        source = workflow.read_text(encoding="utf-8")
+        start = source.index("      - name: Upload installable Premium Test APK\n")
+        end = source.index("      - name: Enable emulator hardware acceleration\n", start)
+        upload = source[start:end]
+        without_upload = source[:start] + source[end:]
+        marker = "      - name: Upload test and lint reports\n"
+        self.assertIn(marker, without_upload)
+        workflow.write_text(without_upload.replace(marker, upload + marker, 1), encoding="utf-8")
+        self.assert_detected(verifier.check_workflow,
+                             "Verified APK must upload before emulator tests")
+
+    def test_rejects_upload_without_successful_build_and_verification(self):
+        self.replace(".github/workflows/build.yml",
+                     "if: ${{ !cancelled() && steps.build_apks.outcome == 'success' && steps.verify_apks.outcome == 'success' }}",
+                     "if: always()")
+        self.assert_detected(verifier.check_workflow,
+                             "APK upload must require successful build and package verification")
+
+    def test_rejects_ignoring_emulator_test_failures(self):
+        self.replace(".github/workflows/build.yml",
+                     "uses: reactivecircus/android-emulator-runner@v2",
+                     "continue-on-error: true\n        uses: reactivecircus/android-emulator-runner@v2")
+        self.assert_detected(verifier.check_workflow,
+                             "Emulator test failures must fail the workflow")
+
 
 if __name__ == "__main__":
     unittest.main()

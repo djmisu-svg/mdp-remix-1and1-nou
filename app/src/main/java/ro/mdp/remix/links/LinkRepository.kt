@@ -20,6 +20,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.util.UUID
+import ro.mdp.remix.transfer.CollectionMerge
 
 /** Offline link metadata only. YouTube media is never requested or downloaded here. */
 class LinkRepository(context: Context) {
@@ -47,6 +48,16 @@ class LinkRepository(context: Context) {
             mutableLoading.value = false
         }
     }
+
+    suspend fun sharedSnapshot(): LinkLibrary = withContext(Dispatchers.IO) {
+        initialLoad.await()
+        mutex.withLock { mutableState.value }
+    }
+
+    suspend fun importShared(library: LinkLibrary, transferId: String) =
+        mutate { CollectionMerge.youtube(it, library, transferId) }
+
+    suspend fun syncBrand(library: LinkLibrary) = mutate { CollectionMerge.syncBrand(it, library) }
 
     suspend fun addLink(title: String, url: String, playlistId: String? = null) = mutate {
         LinkRules.addLink(it, UUID.randomUUID().toString(), title, url, playlistId, System.currentTimeMillis())

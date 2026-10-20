@@ -1,6 +1,16 @@
-# MdP RemiX 1&1
+# MdP RemiX 1&1 Premium
 
-Native Android music player and YouTube playlist-link manager, written in Kotlin with Jetpack Compose and AndroidX Media3. Black, gold and charcoal interface with Romanian labels; responsive layouts for phones and tablets. Android 6.0/API 23 or later.
+The complete application lives on `feature/premium-settings-share-updates` (PR #2). That branch contains `main` and the earlier YouTube-player branch; all approved Premium features are preserved. PR #2 is not merged automatically.
+
+Settings offers the installed APK through Android Sharesheet, the verified direct public release-download link, or the complete APK plus `.mdpremix` personal collection. The collection includes actual local audio, the selected GIF/image/video background, playlists, favorites and preferences. FileProvider grants temporary read access. See [sharing and updates](docs/SHARING_AND_UPDATES.md).
+
+Production uses `ro.mdp.remix`. A single permanently backed-up Release key signs every future update, and versionCode increases. The new identity requires a fresh migration if the old Debug certificate differs: [save and verify the old data first](tools/BACKUP_LEGACY_TABLET.md), keep the old app installed until restoration is verified, and follow the [tablet signing setup](docs/ANDROID_RELEASE_SIGNING_TABLET.md). No signing key or password belongs in the repository or an artifact.
+
+A signed verification build must pass the production fresh-install and same-key upgrade regression. Public publication promotes the exact tested artifact without rebuilding it, after the owner verifies the private backup, WhatsApp delivery and another Android device. See [final release status and procedure](docs/FINAL_RELEASE_STATUS.md). A production release is not claimed before these checks succeed.
+
+The four AKAI skins, clockwise playback-driven reels, real stereo PCM peak/VU meters, RO/EN preferences, local albums/playlists, YouTube links and animated background controls remain implemented. See [premium details](docs/PREMIUM_UI.md) and [background behavior](docs/BACKGROUND_SYSTEM.md). The original owner-selected couple GIF is absent from the repository; selected custom backgrounds remain supported and no substitute is bundled.
+
+Native Android music player and YouTube playlist-link manager, written in Kotlin with Jetpack Compose and AndroidX Media3. Matte black #09090B and blood red #A60920 interface with Romanian/English selection and a silver AKAI Classic recorder option; responsive layouts for phones and tablets. Android 6.0/API 23 or later.
 
 ## Features
 
@@ -12,22 +22,21 @@ Native Android music player and YouTube playlist-link manager, written in Kotlin
 
 Playlists managed here are local collections of saved links; renaming or arranging them does not edit the playlist on your YouTube account. No account or API key is required by this app. Viewing YouTube content requires connectivity through YouTube or a browser; saved links, their organization and local audio remain available offline.
 
-## Download the APK
+## Release download
 
-After the project has been uploaded to `djmisu-svg/mdp-remix-1and1-nou`:
+The stable direct APK address is:
 
-1. Open [GitHub Actions — Android Debug APK](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions/workflows/build.yml).
-2. Choose the successful green run for your uploaded commit.
-3. Under **Artifacts**, download **MdP-RemiX-debug** while signed into GitHub.
-4. Extract the ZIP and install **MdP-RemiX.apk** on your Android device. Allow installation from the browser/file manager if Android asks.
+`https://github.com/djmisu-svg/mdp-remix-1and1-nou/releases/latest/download/MdP-RemiX-Premium.apk`
 
-The workflow runs on push, pull request and manual dispatch. It sets up JDK 17, installs an explicit list of current SDK packages, validates the Gradle wrapper, runs JVM tests and Android lint, builds a signed Debug APK, verifies its signature and uploads the APK with a SHA-256 checksum. Artifacts are retained for 30 days. Test/lint reports are uploaded separately. No secrets or manual code edits are needed.
+It becomes available only after a verified signed Release is published. Until that happens, the app reports that no public release is available instead of sharing a repository page or Actions link. The versioned APK, SHA-256 checksums and update manifest are published together. Sharing an installed APK remains available offline.
+
+Premium Test remains a separate development package (`ro.mdp.remix.premiumtest`). Its Actions artifact is for development verification and data-restoration checks; it is not the public production Release.
 
 ## Use the app
 
-Start in **YouTube & linkuri**. Add a video or playlist URL with a name, then organize it into local playlists. Playlist actions allow renaming, favorites, ordering and deletion. Entry actions allow title changes, favorites, collection membership and deletion. **Recente** shows successfully handed-off links and opened collections; it does not claim that a video finished playing in YouTube.
+Start in **Studio**. Use the recorder design selector to choose AKAI Classic, AKAI Black Edition, AKAI Red Edition or AKAI Studio Pro; the selection is saved for future launches. Switch to the **YouTube** library to organize music links. Add a video or playlist URL with a name, then organize it into local playlists. Playlist actions allow renaming, favorites, ordering and deletion. Entry actions allow title changes, favorites, collection membership and deletion. **Recente** shows successfully handed-off links and opened collections; it does not claim that a video finished playing in YouTube.
 
-Switch to **Muzică locală** for the offline audio player. **Adaugă muzică** opens Android's local-file picker. Importing retains document permissions without copying the audio or requesting broad storage access. Removing an entry never deletes the original file. Moving/deleting the original file can make playback unavailable; import it again from the new location.
+Use **Studio** for the offline audio player. **Importă / Import** opens Android's local-file picker. Importing retains document permissions without copying the audio or requesting broad storage access. Removing an entry never deletes the original file. Moving/deleting the original file can make playback unavailable; import it again from the new location.
 
 The local player uses a MediaSessionService, handles audio focus and headphone removal, and exposes system media controls. Active audio continues when the app is dismissed from Recents. Force stopping the app stops playback. The playback queue is not restored after the process/device restarts. Media3 playback is used only for imported local audio; YouTube playback belongs to the external official app/browser.
 
@@ -45,7 +54,7 @@ The local player uses a MediaSessionService, handles audio focus and headphone r
 | Android Build Tools | 35.0.0 |
 | Minimum Android SDK | 23 |
 
-Root `build.gradle` and `settings.gradle` are the effective scripts; equivalent root `.kts` copies are retained so previous workspace files are preserved. The app module uses `app/build.gradle.kts`. Uploading this project over the previous repository also replaces its incomplete root Groovy configurations.
+Root `build.gradle` and `settings.gradle` are the effective scripts; equivalent root `.kts` copies are retained so previous workspace files are preserved. The app module uses `app/build.gradle.kts`. Production application ID remains `ro.mdp.remix`; release signing is supplied by the protected `android-production` environment. The test package keeps its `.premiumtest` suffix and separate debug signing.
 
 Structural checks use only Python's standard library and do not download or install anything:
 
@@ -63,12 +72,18 @@ The raw Gradle result is `app/build/outputs/apk/debug/app-debug.apk`; CI verifie
 
 ## Verification status
 
-The project is published on **feat/mdp-remix-youtube-player** in [Pull Request #1](https://github.com/djmisu-svg/mdp-remix-1and1-nou/pull/1). GitHub authorization is restored; no manual source upload is necessary. Follow the [branch Actions runs](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions?query=branch%3Afeat%2Fmdp-remix-youtube-player) for the actual build result and APK artifact.
+The prior Premium baseline passed both APK builds, JVM tests/lint, 16 Android 35 regressions, real GIF/MP4 background playback, stereo PCM meters and a disposable Test-package upgrade. That does not establish compatibility with the owner's old Debug signing certificate or prove WhatsApp delivery.
 
-The first real CI run passed Python checks, JDK/SDK setup and wrapper validation, then identified two Compose receiver-scope compilation errors. The layout now captures its dimensions before entering nested Compose scopes. Subsequent runs validate the fix, app JVM tests, Android lint and APK signing. No local SDK installation/build retry was used. Installation and real playback on a Samsung device remain unverified.
+The release workflow is configured to exercise the actual permanent signer with a non-debuggable production fresh install and a higher-code same-key update. Those checks are not considered passed until a completed signed run reports them. Production signing, real owner-data restoration, WhatsApp transmission and another physical Android device must be reported separately. No local SDK or physical-device test is assumed to have run.
 
-See [testing](docs/TESTING.md), [delivery checks](docs/VERIFICARE_LIVRARE.md) and [upload instructions](PENTRU_GITHUB_ACTIONS.md).
+See [testing](docs/TESTING.md), [final release status](docs/FINAL_RELEASE_STATUS.md), and the reports attached to the actual completed workflow run.
 
 ## Project layout
 
 `links` contains strict YouTube URL validation, local collections, JSON persistence and its ViewModel. `external` launches official playback. `data` handles imported audio and atomic local-library storage. `playback` owns the Media3 service/controller. `ui` contains the two responsive Compose libraries. No analytics, advertisements or embedded YouTube playback SDK is included.
+# Premium Test APK (PR #2)
+
+The PR workflow publishes **MdP-RemiX-premiumtest**, containing **MdP-RemiX-Premium-Test.apk** and `SHA256SUMS.txt`. The launcher name is **MdP RemiX Premium Test**, with application ID **ro.mdp.remix.premiumtest**. It installs alongside the existing app without replacing it. The production ID remains **ro.mdp.remix**, and its data stays in its existing private storage. The test app starts with a separate library and settings; do not uninstall the existing application.
+
+See [Premium Test build and verification](docs/PREMIUM_TEST.md) for the current artifact and verification process. PR #2 is not merged automatically.
+

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MDP is path artwork, not a font. All lettering stays inside the central safe circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:name="background" android:fillColor="#09090B" android:pathData="M54,0a54,54 0,1 0,0 108a54,54 0,1 0,0 -108" />
+    <path android:name="letter_m" android:fillColor="#FFFFFF"
+        android:pathData="M27,67V41h4l4,10 4,-10h4v26h-4V50l-4,9 -4,-9v17z" />
+    <path android:name="letter_d" android:fillColor="#FFFFFF"
+        android:pathData="M46,41h5.5C58.5,41 62,45.4 62,54S58.5,67 51.5,67H46zM50,45v18h1.5C55.9,63 58,60 58,54S55.9,45 51.5,45z" />
+    <path android:name="letter_p" android:fillColor="#FFFFFF"
+        android:pathData="M65,67V41h7C78,41 81,44 81,49.5S78,58 72,58h-3v9zM69,45v9h3C75.3,54 77,52.7 77,49.5S75.3,45 72,45z" />
+    <path android:name="brand_accent" android:fillColor="#A60920"
+        android:pathData="M35,72h38v3H35z" />
+</vector>

@@ -24,6 +24,7 @@ import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.UUID
+import ro.mdp.remix.transfer.CollectionMerge
 
 /** Local library only. Audio stays in its selected location and no network is used. */
 class MusicRepository(context: Context) {
@@ -80,6 +81,31 @@ class MusicRepository(context: Context) {
                 newlyRetained.filterNot { it.toString() in existingUris }.forEach(::releaseReadPermission)
                 throw failure
             }
+        }
+    }
+
+    /** A consistent export waits for the durable library to finish loading. */
+    suspend fun sharedSnapshot(): LibrarySnapshot = withContext(Dispatchers.IO) {
+        initialLoad.await()
+        mutex.withLock { mutableState.value }
+    }
+
+    /** Received media is app-owned; it never depends on the sender's document grants. */
+    suspend fun importShared(snapshot: LibrarySnapshot, transferId: String) = withContext(Dispatchers.IO) {
+        initialLoad.await()
+        mutex.withLock {
+            snapshot.tracks.forEach { track ->
+                val uri = Uri.parse(track.uri)
+                require(uri.scheme == "content" && uri.authority == "${appContext.packageName}.mdpfiles" &&
+                    uri.path.orEmpty().matches(Regex("/media/[0-9a-f]{64}"))) {
+                    "Received music must use this installation's copied media files."
+                }
+                resolver.openAssetFileDescriptor(uri, "r")?.use { } ?: throw FileNotFoundException("Received audio is unavailable.")
+            }
+            currentCoroutineContext().ensureActive()
+            val previous = mutableState.value
+            val next = CollectionMerge.music(previous, snapshot, transferId)
+            if (next != previous) persistAndPublish(next)
         }
     }
 
@@ -170,6 +196,7 @@ class MusicRepository(context: Context) {
     }
 
     private fun releaseReadPermission(uri: Uri) {
+        if (uri.authority == "${appContext.packageName}.mdpfiles") return
         runCatching { resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
     }
 

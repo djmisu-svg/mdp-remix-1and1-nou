@@ -140,6 +140,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    suspend fun sharedSnapshot(): LibrarySnapshot = repository.sharedSnapshot()
+
+    suspend fun importShared(snapshot: LibrarySnapshot, transferId: String) =
+        repository.importShared(snapshot, transferId)
+
     fun importUris(uris: List<Uri>) {
         if (uris.isEmpty() || mutableImporting.value) return
         mutableImporting.value = true
