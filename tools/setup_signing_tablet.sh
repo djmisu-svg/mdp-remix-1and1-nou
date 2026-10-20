@@ -13,6 +13,7 @@ alias_name='mdp-remix-release'
 backup_directory="$HOME/storage/downloads/MDP-release-signing-backup"
 known_backup="$backup_directory/mdp-remix-release.p12"
 existing=false
+new_key_authorized=false
 if [[ $# -gt 0 ]]; then
     if [[ $# -eq 1 && "$1" == '--status' ]]; then
         # Metadata only: no network, keytool, password prompt or filesystem writes.
@@ -102,6 +103,7 @@ elif [[ ! -f "$keystore" ]]; then
     echo 'Do not uninstall that app if its data must be retained. Use its original key instead.'
     read -r -p 'For a first public signing identity only, type NEW: ' confirmation
     [[ "$confirmation" == NEW ]] || { echo 'Stopped; no key generated.'; exit 1; }
+    new_key_authorized=true
 fi
 [[ -n "$alias_name" ]] || { echo 'A key alias is required.'; exit 1; }
 read -r -s -p 'Keystore password (hidden; use a password manager): ' MDP_SETUP_STORE_PASSWORD
@@ -118,6 +120,10 @@ else
 fi
 export MDP_SETUP_STORE_PASSWORD MDP_SETUP_KEY_PASSWORD
 if [[ ! -f "$keystore" ]]; then
+    if [[ "$existing" == true || "$new_key_authorized" != true ]]; then
+        echo 'Stopped: the existing keystore is no longer available. Restore the same file; no replacement key will be generated.'
+        exit 1
+    fi
     keytool -genkeypair -storetype PKCS12 -keystore "$keystore" -alias "$alias_name" \
         -keyalg RSA -keysize 4096 -sigalg SHA256withRSA -validity 10000 \
         -dname 'CN=MdP RemiX Android Release' \
