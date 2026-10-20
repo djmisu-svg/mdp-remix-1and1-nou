@@ -121,7 +121,7 @@ jobs:
               elif matches_pin != 'YES':
                   finish('CERTIFICATE_PIN_MISMATCH', candidate, matches_pin)
               elif candidate == 'NONE':
-                  finish('NO_KNOWN_V3_KEY_MATCH', candidate, matches_pin)
+                  finish('KEY_VERIFIED_NEW_IDENTITY', candidate, matches_pin)
               else:
                   # Identity is matched by SHA-256 only, including an ORIGINAL Debug certificate.
                   finish('MATCHES_KNOWN_V3_KEY', candidate, matches_pin)

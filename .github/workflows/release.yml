@@ -9,7 +9,7 @@ on:
         required: false
         default: ''
       publish_release:
-        description: 'Publish the verified production APK and update manifest'
+        description: 'Legacy input: keep false; publish only by promoting the exact tested artifact'
         type: boolean
         required: true
         default: false
@@ -35,7 +35,7 @@ jobs:
   signed_apk:
     name: Build and verify production-signed update APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     environment: android-production
     outputs:
       version_name: ${{ steps.release_metadata.outputs.version_name }}
@@ -44,6 +44,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Prevent rebuilding when the owner intends to publish a tested APK
+        if: ${{ inputs.publish_release }}
+        shell: bash
+        run: |
+          echo '::error::Build with publish_release=false, test that exact artifact, then use publish-verified-release.yml (or target=publish-release) with its source_run_id. Public publication never rebuilds the tested APK.'
+          exit 1
+
       - name: Check out the selected approved source
         uses: actions/checkout@v4
         with:
@@ -188,7 +195,7 @@ jobs:
               if manifest.get('certificateSha256', '').lower() != pin:
                   sys.exit('The supplied production key differs from the last public release. Do not publish an incompatible update.')
               version_code = max(version_code, manifest['versionCode'] + 1)
-          if not 1 <= version_code <= 2100000000:
+          if not 1 <= version_code < 2100000000:
               sys.exit('No valid higher Android versionCode is available.')
           artifact_name = 'MdP-RemiX-Premium-' + version_name + '-signed'
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
@@ -219,7 +226,8 @@ jobs:
           # Keep signing diagnostics private; do not upload build logs or Gradle caches.
           if ! bash ./gradlew --no-daemon --console=plain --quiet \
               -PmdpVersionCode="$MDP_VERSION_CODE" -PmdpVersionName="$MDP_VERSION_NAME" \
-              testReleaseUnitTest lintRelease assembleRelease \
+              -PmdpInstrumentedBuildType=release \
+              testReleaseUnitTest lintRelease assembleRelease assembleReleaseAndroidTest \
               > "$RUNNER_TEMP/mdp-release-private/gradle.log" 2>&1; then
             echo '::error::Release build, unit tests or lint failed. No production APK will be published. Check signing secrets and source before retrying.'
             exit 1
@@ -258,6 +266,9 @@ jobs:
           PY
           mkdir -p dist-release
           cp "$apk" "dist-release/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk"
+          cp "$apk" dist-release/MdP-RemiX-Premium.apk
+          cp app/build/outputs/apk/androidTest/release/app-release-androidTest.apk \
+            "$RUNNER_TEMP/mdp-release-private/release-androidTest.apk"
           python3 - <<'PYCODE'
           import hashlib, json, os, pathlib
           directory = pathlib.Path('dist-release')
@@ -268,14 +279,58 @@ jobs:
               'versionCode': int(os.environ['MDP_VERSION_CODE']), 'versionName': os.environ['MDP_VERSION_NAME'],
               'apkName': apk.name, 'sha256': digest, 'certificateSha256': pin, 'sizeBytes': apk.stat().st_size}
           (directory / 'update-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-          (directory / 'SHA256SUMS.txt').write_text(digest + '  ' + apk.name + '\n')
+          stable = directory / 'MdP-RemiX-Premium.apk'
+          if stable.read_bytes() != apk.read_bytes():
+              raise SystemExit('Stable download alias differs from the verified versioned APK.')
+          (directory / 'SHA256SUMS.txt').write_text(digest + '  ' + apk.name + '\n' + digest + '  ' + stable.name + '\n')
           PYCODE
           {
             echo '### Production release verification'
             echo "Signed APK, pinned certificate, package ro.mdp.remix, version $MDP_VERSION_NAME ($MDP_VERSION_CODE), non-debuggable manifest and ZIP alignment verified."
-            echo 'Release unit tests and Android lint passed. Device installation was not performed by this workflow.'
+            echo 'Release unit tests and Android lint passed. Actual production-signed emulator installation and update checks run next.'
             echo 'update-manifest.json records the verified APK hash, byte size, version and production certificate for in-app updates.'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build a higher-code same-key update fixture
+        shell: bash
+        env:
+          MDP_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MDP_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MDP_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Only versionCode changes. The approved distributable is already copied
+          # to dist-release; this private fixture is never uploaded or published.
+          next_code=$((MDP_VERSION_CODE + 1))
+          if ! bash ./gradlew --no-daemon --console=plain --quiet \
+              -PmdpVersionCode="$next_code" -PmdpVersionName="$MDP_VERSION_NAME" \
+              -PmdpInstrumentedBuildType=release assembleRelease \
+              > "$RUNNER_TEMP/mdp-release-private/upgrade-fixture-gradle.log" 2>&1; then
+            echo '::error::The same-key update fixture could not be built. No production APK will be published.'
+            exit 1
+          fi
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/mdp-release-private/upgrade-fixture.apk"
+
+      - name: Enable emulator hardware acceleration
+        run: sudo chmod 666 /dev/kvm
+
+      - name: Verify a fresh production install and same-key update on Android 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash tools/verify_production_upgrade.sh "dist-release/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk" "$RUNNER_TEMP/mdp-release-private/release-androidTest.apk" "$RUNNER_TEMP/mdp-release-private/upgrade-fixture.apk" "$RUNNER_TEMP/mdp-release-private/expected-sha256.txt" dist-release/production-install-verification.txt
+
+      - name: Record actual production installation evidence
+        shell: bash
+        run: |
+          test -s dist-release/production-install-verification.txt
+          cat dist-release/production-install-verification.txt >> "$GITHUB_STEP_SUMMARY"
+          echo 'Scope: disposable Android 35 emulator and the actual pinned release signer. Physical WhatsApp sharing and installation on another device require owner confirmation.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload verified production APK only
         uses: actions/upload-artifact@v4
@@ -285,6 +340,7 @@ jobs:
             dist-release/*.apk
             dist-release/SHA256SUMS.txt
             dist-release/update-manifest.json
+            dist-release/production-install-verification.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -295,53 +351,3 @@ jobs:
           rm -rf -- "$RUNNER_TEMP/mdp-release-private"
           rm -rf -- "$HOME/.gradle/daemon"
 
-  publish:
-    name: Publish verified APK to GitHub Releases
-    needs: signed_apk
-    if: ${{ inputs.publish_release }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Download only the verified release artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.signed_apk.outputs.artifact_name }}
-          path: dist-release
-
-      - name: Publish the verified official update
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          MDP_VERSION_NAME: ${{ needs.signed_apk.outputs.version_name }}
-          MDP_VERSION_CODE: ${{ needs.signed_apk.outputs.version_code }}
-        run: |
-          set -euo pipefail
-          test "$GH_REPO" = 'djmisu-svg/mdp-remix-1and1-nou'
-          (cd dist-release && sha256sum -c SHA256SUMS.txt)
-          tag="v$MDP_VERSION_NAME"
-          if gh release view "$tag" > /dev/null 2>&1; then
-            echo '::error::The release already exists. Existing production releases will not be overwritten.'
-            exit 1
-          fi
-          python3 - <<'PYCODE'
-          import os, pathlib
-          name, code = os.environ['MDP_VERSION_NAME'], os.environ['MDP_VERSION_CODE']
-          notes = (f'MdP RemiX 1&1 Premium v{name}\n\n'
-              f'Download MdP-RemiX-Premium-{name}.apk and open it on Android 6.0 or newer. '
-              'Allow installation from your browser or file manager when Android asks.\n\n'
-              f'Package: ro.mdp.remix. Version: {name} ({code}). '
-              'Production signature, certificate identity, package, non-debuggable manifest, ZIP alignment, unit tests and lint verified. '
-              'This workflow does not claim a physical-device installation test.\n\n'
-              'For an existing production installation, install this APK as an update without uninstalling. '
-              'The package and original signing key must match. Keep your signing keystore and encrypted backup for all future updates. '
-              'Premium Test remains a separate application.\n\n'
-              'The official update-manifest.json contains the APK SHA-256, size and signing-certificate fingerprint.\n')
-          pathlib.Path('release-notes.txt').write_text(notes)
-          PYCODE
-          gh release create "$tag" --target "$GITHUB_SHA" --title "MdP RemiX 1&1 Premium v$MDP_VERSION_NAME" --notes-file release-notes.txt --draft
-          gh release upload "$tag" "dist-release/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk" dist-release/SHA256SUMS.txt dist-release/update-manifest.json
-          gh release edit "$tag" --draft=false --latest
-          echo "Release download: https://github.com/$GH_REPO/releases/download/$tag/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk" >> "$GITHUB_STEP_SUMMARY"

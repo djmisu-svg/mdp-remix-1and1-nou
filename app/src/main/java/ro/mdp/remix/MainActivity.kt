@@ -52,6 +52,9 @@ import ro.mdp.remix.brand.BrandLibraryPanel
 import ro.mdp.remix.brand.BrandLibraryViewModel
 import ro.mdp.remix.transfer.CollectionData
 import ro.mdp.remix.transfer.CollectionSharing
+import ro.mdp.remix.transfer.ReleaseApkLinkClient
+import ro.mdp.remix.transfer.ReleaseShareError
+import ro.mdp.remix.transfer.ReleaseShareException
 import ro.mdp.remix.updates.UpdateDialog
 import ro.mdp.remix.updates.UpdateViewModel
 import ro.mdp.remix.updates.UpdateError
@@ -64,6 +67,27 @@ import ro.mdp.remix.external.YouTubeLauncher
 import ro.mdp.remix.links.LinkViewModel
 import ro.mdp.remix.playback.PlayerViewModel
 import ro.mdp.remix.ui.*
+
+private fun releaseShareMessage(failure: Exception, english: Boolean): String {
+    val reason = (failure as? ReleaseShareException)?.reason
+    return when (reason) {
+        ReleaseShareError.NO_RELEASE, ReleaseShareError.NO_DIRECT_APK -> if (english) {
+            "The official release APK is not published or is unavailable. You can send the installed APK, or try the link again after publication."
+        } else {
+            "APK-ul Release oficial nu este publicat sau nu este disponibil. Poți trimite APK-ul instalat sau poți verifica din nou linkul după publicare."
+        }
+        ReleaseShareError.UNTRUSTED_RELEASE -> if (english) {
+            "The official APK download link could not be verified. No unverified link was shared. Try again later."
+        } else {
+            "Linkul oficial de descărcare APK nu a putut fi verificat. Nu s-a distribuit un link neverificat. Reîncearcă mai târziu."
+        }
+        else -> if (english) {
+            "The release could not be checked. Check your connection and try again, or send the installed APK offline."
+        } else {
+            "Release-ul nu a putut fi verificat. Verifică conexiunea și reîncearcă sau trimite APK-ul instalat fără internet."
+        }
+    }
+}
 
 private enum class Destination(val tag: String) {
     STUDIO("nav_studio"), YOUTUBE("nav_youtube"), SETTINGS("nav_settings")
@@ -93,6 +117,8 @@ class MainActivity : ComponentActivity() {
                 var brandSyncEnabled by rememberSaveable { mutableStateOf(preferences.getBoolean("brand_sync_enabled", true)) }
                 var importRevision by rememberSaveable { mutableIntStateOf(0) }
                 var confirmShare by remember { mutableStateOf(false) }
+                var confirmCollectionShare by remember { mutableStateOf(false) }
+                var transferStatus by remember { mutableStateOf<String?>(null) }
                 var transferBusy by remember { mutableStateOf(false) }
                 var transferNotice by remember { mutableStateOf<String?>(null) }
                 var showUpdates by rememberSaveable { mutableStateOf(false) }
@@ -101,6 +127,7 @@ class MainActivity : ComponentActivity() {
                 val updateState by updateViewModel.state.collectAsStateWithLifecycle()
                 val scope = rememberCoroutineScope()
                 val sharing = remember { CollectionSharing(applicationContext) }
+                val releaseSharing = remember { ReleaseApkLinkClient() }
                 val installVerified: () -> Unit = {
                     scope.launch {
                         try { startActivity(updateViewModel.installationIntent()) }
@@ -249,10 +276,59 @@ class MainActivity : ComponentActivity() {
                     }
                     if (confirmShare) AlertDialog(
                         onDismissRequest = { confirmShare = false },
+                        title = { Text(uiText("Distribuie aplicația", "Share app")) },
+                        text = { Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(uiText("Alege fișierul APK instalat, un link direct Release verificat sau aplicația împreună cu întreaga colecție.", "Choose the installed APK, a verified direct release download link, or the app with your complete collection."))
+                            if (packageName.endsWith(".premiumtest")) Text(uiText("APK-ul local este Premium Test. Linkul public, dacă este disponibil, descarcă versiunea Release oficială.", "The local APK is Premium Test. The public link, when available, downloads the official release."), style = MaterialTheme.typography.bodySmall, color = Muted)
+                            Button(onClick = {
+                                confirmShare = false
+                                transferBusy = true
+                                transferStatus = if (english) "Copying and verifying the installed APK. No internet connection is required." else "Se copiază și se verifică APK-ul instalat. Nu este necesară conexiunea la internet."
+                                scope.launch {
+                                    try {
+                                        val prepared = sharing.prepareApk(english)
+                                        openExternal(Intent.createChooser(sharing.apkShareIntent(prepared), if (english) "Share installable APK" else "Trimite APK-ul instalabil")) {
+                                            externalError = if (english) "No app can share this APK. Try a file transfer app or the direct download link." else "Nu există o aplicație care să trimită APK-ul. Încearcă o aplicație de transfer sau linkul direct de descărcare."
+                                        }
+                                    } catch (cancelled: CancellationException) { throw cancelled }
+                                    catch (failure: Exception) { externalError = failure.message ?: if (english) "The APK cannot be shared. Try again." else "APK-ul nu poate fi distribuit. Reîncearcă." }
+                                    finally { transferBusy = false; transferStatus = null }
+                                }
+                            }, modifier = Modifier.fillMaxWidth().testTag("share_apk_file")) { Text(uiText("Trimite APK-ul instalat", "Send installed APK")) }
+                            OutlinedButton(onClick = {
+                                confirmShare = false
+                                transferBusy = true
+                                transferStatus = if (english) "Checking the official release and the direct APK download link…" else "Se verifică release-ul oficial și linkul direct de descărcare APK…"
+                                scope.launch {
+                                    try {
+                                        val link = releaseSharing.availableLink()
+                                        val intent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_SUBJECT, "MdP RemiX 1&1 Premium ${link.versionName}")
+                                            putExtra(Intent.EXTRA_TEXT, link.url)
+                                        }
+                                        openExternal(Intent.createChooser(intent, if (english) "Share direct APK download" else "Trimite linkul direct către APK")) {
+                                            externalError = if (english) "No app can share the download link." else "Nu există o aplicație care să distribuie linkul de descărcare."
+                                        }
+                                    } catch (cancelled: CancellationException) { throw cancelled }
+                                    catch (failure: Exception) { externalError = releaseShareMessage(failure, english) }
+                                    finally { transferBusy = false; transferStatus = null }
+                                }
+                            }, modifier = Modifier.fillMaxWidth().testTag("share_release_link")) { Text(uiText("Trimite linkul direct Release", "Send direct release link")) }
+                            OutlinedButton(onClick = { confirmShare = false; confirmCollectionShare = true }, modifier = Modifier.fillMaxWidth().testTag("share_complete_collection")) {
+                                Text(uiText("APK + colecția completă", "APK + complete collection"))
+                            }
+                            Text(uiText("Unele servicii pot bloca atașamentele APK; linkul direct este o alternativă. Colecția personală se trimite numai dacă alegi ultima opțiune.", "Some services may block APK attachments; the direct link is an alternative. Your personal collection is shared only when you choose the last option."), style = MaterialTheme.typography.bodySmall, color = Muted)
+                        } },
+                        confirmButton = {},
+                        dismissButton = { TextButton(onClick = { confirmShare = false }) { Text(uiText("Anulează", "Cancel")) } },
+                    )
+                    if (confirmCollectionShare) AlertDialog(
+                        onDismissRequest = { confirmCollectionShare = false },
                         title = { Text(uiText("Distribuie aplicația și colecția", "Share app and collection")) },
                         text = { Text(uiText("Se vor trimite două fișiere: APK-ul instalat și colecția ta cu playlist-uri, muzică locală, fundal și setări. Fișierele mari pot necesita Quick Share, Bluetooth sau un serviciu de fișiere. Destinatarul instalează APK-ul și importă colecția.", "Two files will be shared: the installed APK and your collection with playlists, local music, background and settings. Large files may need Quick Share, Bluetooth or a file service. The recipient installs the APK and imports the collection.")) },
                         confirmButton = { TextButton(onClick = {
-                            confirmShare = false
+                            confirmCollectionShare = false
                             transferBusy = true
                             scope.launch {
                                 try {
@@ -270,7 +346,7 @@ class MainActivity : ComponentActivity() {
                                 finally { transferBusy = false }
                             }
                         }) { Text(uiText("Pregătește și distribuie", "Prepare and share")) } },
-                        dismissButton = { TextButton(onClick = { confirmShare = false }) { Text(uiText("Anulează", "Cancel")) } },
+                        dismissButton = { TextButton(onClick = { confirmCollectionShare = false }) { Text(uiText("Anulează", "Cancel")) } },
                     )
                     incomingCollection?.let { uri ->
                         if (!transferBusy) AlertDialog(
@@ -307,10 +383,10 @@ class MainActivity : ComponentActivity() {
                             dismissButton = { TextButton(onClick = { clearCollectionIntent() }) { Text(uiText("Anulează", "Cancel")) } },
                         )
                     }
-                    if (transferBusy) AlertDialog(onDismissRequest = {}, title = { Text(uiText("Se pregătesc fișierele…", "Preparing files…")) },
+                    if (transferBusy) AlertDialog(onDismissRequest = {}, title = { Text(uiText("Se pregătește operațiunea…", "Preparing…")) },
                         text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
-                            Text(uiText("Muzica și fundalul sunt copiate. Păstrează aplicația deschisă până la finalizare.", "Music and background are being copied. Keep the app open until this finishes."))
+                            Text(transferStatus ?: uiText("Muzica și fundalul sunt copiate. Păstrează aplicația deschisă până la finalizare.", "Music and background are being copied. Keep the app open until this finishes."))
                         } }, confirmButton = {})
                     transferNotice?.let { notice -> AlertDialog(onDismissRequest = { transferNotice = null },
                         title = { Text(uiText("MdP RemiX 1&1", "MdP RemiX 1&1")) }, text = { Text(notice) },
@@ -426,7 +502,7 @@ class MainActivity : ComponentActivity() {
                     Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                         Icon(Icons.Default.Share, null, tint = Red, modifier = Modifier.size(28.dp))
                         Text(uiText("Sunetul merge mai departe.", "Good sound travels."), style = MaterialTheme.typography.titleLarge)
-                        Text(uiText("Trimite APK-ul real și colecția ta: playlist-uri, linkuri YouTube, muzică locală, fundal și setări. Destinatarul instalează aplicația și importă fișierul .mdpremix.", "Send the actual APK and your collection: playlists, YouTube links, local music, background and settings. The recipient installs the app and imports the .mdpremix file."), color = Muted)
+                        Text(uiText("Trimite APK-ul instalat sau un link direct către Release-ul oficial. Poți trimite separat și colecția completă, cu muzică locală, fundal și setări.", "Send the installed APK or a direct official release download link. You can also send your complete collection with local music, background and settings."), color = Muted)
                         Button(onClick = onShare, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("share_app"), shape = RoundedCornerShape(14.dp)) {
                             Text(uiText("Distribuie aplicația", "Share app")); Spacer(Modifier.width(10.dp)); Icon(Icons.Default.ArrowOutward, null, Modifier.size(18.dp))
                         }

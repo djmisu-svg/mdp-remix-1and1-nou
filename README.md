@@ -1,14 +1,14 @@
-# Premium AKAI recorder interfaces
+# MdP RemiX 1&1 Premium
 
-Sharing now prepares the unchanged installed APK plus a complete portable `.mdpremix` collection (local audio, background, playlists and saved settings). Settings also includes panel transparency, the public brand library and a GitHub updater that verifies package, certificate and SHA-256 before asking Android to install. See [sharing and updates](docs/SHARING_AND_UPDATES.md) for use, verification scope and signing prerequisites. No production release is claimed without its original key and successful verification.
+The complete application lives on `feature/premium-settings-share-updates` (PR #2). That branch contains `main` and the earlier YouTube-player branch; all approved Premium features are preserved. PR #2 is not merged automatically.
 
-PR #2 now includes the complete Studio, YouTube library, and Preferences redesign, with four persistently selectable AKAI recorder designs, synchronized clockwise reels, attached reel lettering, a complete MDP launcher icon and real PCM-driven stereo peak/VU meters. See [premium features and verification](docs/PREMIUM_UI.md). Download the isolated **MdP-RemiX-premiumtest** artifact from the latest successful PR build; the original application and its data stay separate.
+Settings offers the installed APK through Android Sharesheet, the verified direct public release-download link, or the complete APK plus `.mdpremix` personal collection. The collection includes actual local audio, the selected GIF/image/video background, playlists, favorites and preferences. FileProvider grants temporary read access. See [sharing and updates](docs/SHARING_AND_UPDATES.md).
 
-Premium background controls support selected images, real animated GIFs and muted looping videos behind the recorder. See [background behavior and missing original asset](docs/BACKGROUND_SYSTEM.md) and the separate [iOS compatibility technical plan](docs/IOS_COMPATIBILITY_PLAN.md). The original owner-selected couple GIF is absent from the repository and must be supplied; no substitute is bundled.
+Production uses `ro.mdp.remix`. A single permanently backed-up Release key signs every future update, and versionCode increases. The new identity requires a fresh migration if the old Debug certificate differs: [save and verify the old data first](tools/BACKUP_LEGACY_TABLET.md), keep the old app installed until restoration is verified, and follow the [tablet signing setup](docs/ANDROID_RELEASE_SIGNING_TABLET.md). No signing key or password belongs in the repository or an artifact.
 
-Production v1.0 signing is prepared but not yet executed. Follow the [Android-tablet signing instructions](docs/ANDROID_RELEASE_SIGNING_TABLET.md) to reuse an existing production key or securely create and back up a first-release key, configure GitHub secrets, and run the manual signed-release workflow. No unsigned or debug-signed APK is published as a production release.
+A signed verification build must pass the production fresh-install and same-key upgrade regression. Public publication promotes the exact tested artifact without rebuilding it, after the owner verifies the private backup, WhatsApp delivery and another Android device. See [final release status and procedure](docs/FINAL_RELEASE_STATUS.md). A production release is not claimed before these checks succeed.
 
-# MdP RemiX 1&1
+The four AKAI skins, clockwise playback-driven reels, real stereo PCM peak/VU meters, RO/EN preferences, local albums/playlists, YouTube links and animated background controls remain implemented. See [premium details](docs/PREMIUM_UI.md) and [background behavior](docs/BACKGROUND_SYSTEM.md). The original owner-selected couple GIF is absent from the repository; selected custom backgrounds remain supported and no substitute is bundled.
 
 Native Android music player and YouTube playlist-link manager, written in Kotlin with Jetpack Compose and AndroidX Media3. Matte black #09090B and blood red #A60920 interface with Romanian/English selection and a silver AKAI Classic recorder option; responsive layouts for phones and tablets. Android 6.0/API 23 or later.
 
@@ -22,16 +22,15 @@ Native Android music player and YouTube playlist-link manager, written in Kotlin
 
 Playlists managed here are local collections of saved links; renaming or arranging them does not edit the playlist on your YouTube account. No account or API key is required by this app. Viewing YouTube content requires connectivity through YouTube or a browser; saved links, their organization and local audio remain available offline.
 
-## Download the APK
+## Release download
 
-For branch `feature/premium-settings-share-updates`:
+The stable direct APK address is:
 
-1. Open [GitHub Actions — Android Premium Test APK](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions/workflows/build.yml).
-2. Choose the successful green run for the latest branch commit.
-3. Under **Artifacts**, download **MdP-RemiX-premiumtest** while signed into GitHub.
-4. Extract the ZIP and install **MdP-RemiX-Premium-Test.apk** on your Android device. Allow installation from the browser/file manager if Android asks.
+`https://github.com/djmisu-svg/mdp-remix-1and1-nou/releases/latest/download/MdP-RemiX-Premium.apk`
 
-The workflow runs on push, pull request and manual dispatch. It sets up JDK 17, installs an explicit list of current SDK packages, validates the Gradle wrapper, runs JVM tests and Android lint, builds Debug and debug-derived Premium Test APKs, verifies their signatures and distinct package IDs and uploads the APK with a SHA-256 checksum. Artifacts are retained for 30 days. Test/lint reports are uploaded separately. No secrets or manual code edits are needed.
+It becomes available only after a verified signed Release is published. Until that happens, the app reports that no public release is available instead of sharing a repository page or Actions link. The versioned APK, SHA-256 checksums and update manifest are published together. Sharing an installed APK remains available offline.
+
+Premium Test remains a separate development package (`ro.mdp.remix.premiumtest`). Its Actions artifact is for development verification and data-restoration checks; it is not the public production Release.
 
 ## Use the app
 
@@ -73,11 +72,11 @@ The raw Gradle result is `app/build/outputs/apk/debug/app-debug.apk`; CI verifie
 
 ## Verification status
 
-The project is published on **feat/mdp-remix-youtube-player** in [Pull Request #1](https://github.com/djmisu-svg/mdp-remix-1and1-nou/pull/1). GitHub authorization is restored; no manual source upload is necessary. Follow the [branch Actions runs](https://github.com/djmisu-svg/mdp-remix-1and1-nou/actions?query=branch%3Afeat%2Fmdp-remix-youtube-player) for the actual build result and APK artifact.
+The prior Premium baseline passed both APK builds, JVM tests/lint, 16 Android 35 regressions, real GIF/MP4 background playback, stereo PCM meters and a disposable Test-package upgrade. That does not establish compatibility with the owner's old Debug signing certificate or prove WhatsApp delivery.
 
-The first real CI run passed Python checks, JDK/SDK setup and wrapper validation, then identified two Compose receiver-scope compilation errors. The layout now captures its dimensions before entering nested Compose scopes. Subsequent runs validate the fix, app JVM tests, Android lint and APK signing. No local SDK installation/build retry was used. Installation and real playback on a Samsung device remain unverified.
+The release workflow is configured to exercise the actual permanent signer with a non-debuggable production fresh install and a higher-code same-key update. Those checks are not considered passed until a completed signed run reports them. Production signing, real owner-data restoration, WhatsApp transmission and another physical Android device must be reported separately. No local SDK or physical-device test is assumed to have run.
 
-See [testing](docs/TESTING.md), [delivery checks](docs/VERIFICARE_LIVRARE.md) and [upload instructions](PENTRU_GITHUB_ACTIONS.md).
+See [testing](docs/TESTING.md), [final release status](docs/FINAL_RELEASE_STATUS.md), and the reports attached to the actual completed workflow run.
 
 ## Project layout
 

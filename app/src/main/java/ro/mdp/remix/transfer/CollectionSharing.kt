@@ -18,6 +18,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class PreparedCollectionShare(val id: String, val apkUri: Uri, val collectionUri: Uri)
+data class PreparedApkShare(val id: String, val apkUri: Uri)
 data class ReceivedCollection(val id: String, val data: CollectionData)
 
 /** Shares the installed signed APK and a separate, validated collection; never downloads YouTube media. */
@@ -27,38 +28,11 @@ class CollectionSharing(context: Context) {
     private val sharingDirectory get() = File(app.cacheDir, "sharing")
 
     suspend fun prepareShare(data: CollectionData): PreparedCollectionShare = withContext(Dispatchers.IO) {
-        val english = data.english
-        if (!app.applicationInfo.splitSourceDirs.isNullOrEmpty()) {
-            throw IOException(if (english) {
-                "This installation uses split APKs. A single base APK cannot be shared as an installable app. Use the official complete APK instead."
-            } else {
-                "Această instalare folosește APK-uri separate. APK-ul de bază nu se poate distribui singur ca aplicație instalabilă. Folosește APK-ul complet oficial."
-            })
-        }
-        prepareDirectory(sharingDirectory)
-        removeExpiredCache()
-        val id = UUID.randomUUID().toString()
+        val prepared = prepareApk(data.english)
+        val id = prepared.id
         val directory = File(sharingDirectory, id)
-        prepareDirectory(directory)
         try {
-            val installedApk = File(app.applicationInfo.sourceDir)
-            if (!installedApk.isFile || !installedApk.canRead()) {
-                throw IOException(if (english) "The installed APK cannot be read." else "APK-ul instalat nu poate fi citit.")
-            }
             val coroutine = currentCoroutineContext()
-            val apk = File(directory, "MdP-RemiX.apk")
-            installedApk.inputStream().use { input ->
-                apk.outputStream().use { output ->
-                    val buffer = ByteArray(COPY_BUFFER_BYTES)
-                    while (true) {
-                        coroutine.ensureActive()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        if (count > 0) output.write(buffer, 0, count)
-                    }
-                    output.fd.sync()
-                }
-            }
             val collection = File(directory, "MdP-RemiX.mdpremix")
             CollectionArchive.write(collection, data) { value ->
                 try {
@@ -96,13 +70,72 @@ class CollectionSharing(context: Context) {
             coroutine.ensureActive()
             PreparedCollectionShare(
                 id,
-                FileProvider.getUriForFile(app, authority, apk),
+                prepared.apkUri,
                 FileProvider.getUriForFile(app, authority, collection),
             )
         } catch (error: Exception) {
             directory.deleteRecursively()
             throw error
         }
+    }
+
+    /** Copies exactly the signed monolithic APK that is currently installed; works offline. */
+    suspend fun prepareApk(english: Boolean): PreparedApkShare = withContext(Dispatchers.IO) {
+        if (!app.applicationInfo.splitSourceDirs.isNullOrEmpty()) {
+            throw IOException(if (english) {
+                "This installation uses split APKs. Share the verified official release download link instead."
+            } else {
+                "Această instalare folosește APK-uri separate. Distribuie în schimb linkul verificat către APK-ul Release oficial."
+            })
+        }
+        val installedApk = File(app.applicationInfo.sourceDir)
+        if (!installedApk.isFile || !installedApk.canRead() || installedApk.length() == 0L) {
+            throw IOException(if (english) {
+                "The installed APK cannot be read. Try again or share the official release download link."
+            } else {
+                "APK-ul instalat nu poate fi citit. Reîncearcă sau distribuie linkul de descărcare Release oficial."
+            })
+        }
+        prepareDirectory(sharingDirectory)
+        removeExpiredCache()
+        val id = UUID.randomUUID().toString()
+        val directory = File(sharingDirectory, id)
+        prepareDirectory(directory)
+        try {
+            val coroutine = currentCoroutineContext()
+            val name = if (app.packageName == "ro.mdp.remix") "MdP-RemiX-Premium.apk" else "MdP-RemiX-Premium-Test.apk"
+            val apk = File(directory, name)
+            val expectedBytes = installedApk.length()
+            installedApk.inputStream().use { input ->
+                apk.outputStream().use { output ->
+                    val buffer = ByteArray(COPY_BUFFER_BYTES)
+                    while (true) {
+                        coroutine.ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (count > 0) output.write(buffer, 0, count)
+                    }
+                    output.fd.sync()
+                }
+            }
+            coroutine.ensureActive()
+            if (apk.length() != expectedBytes || sha256(apk) != sha256(installedApk)) {
+                throw IOException(if (english) "The APK copy could not be verified. Try again." else "Copia APK-ului nu a putut fi verificată. Reîncearcă.")
+            }
+            PreparedApkShare(id, FileProvider.getUriForFile(app, authority, apk))
+        } catch (error: Exception) {
+            directory.deleteRecursively()
+            throw error
+        }
+    }
+
+    /** One APK/document stream gives messaging apps a standard single-attachment Sharesheet intent. */
+    fun apkShareIntent(prepared: PreparedApkShare): Intent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/vnd.android.package-archive"
+        putExtra(Intent.EXTRA_STREAM, prepared.apkUri)
+        putExtra(Intent.EXTRA_SUBJECT, if (app.packageName == "ro.mdp.remix") "MdP RemiX 1&1 Premium" else "MdP RemiX Premium Test")
+        clipData = ClipData.newUri(app.contentResolver, "MdP RemiX APK", prepared.apkUri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
     /** The caller opens the Android chooser; no recipient or messaging service is selected automatically. */
@@ -112,15 +145,15 @@ class CollectionSharing(context: Context) {
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(prepared.apkUri, prepared.collectionUri))
             putExtra(Intent.EXTRA_SUBJECT, "MdP RemiX 1&1")
             putExtra(Intent.EXTRA_TEXT, if (english) {
-                "Install MdP-RemiX.apk, then open Settings → Import shared collection and select MdP-RemiX.mdpremix. " +
+                "Install the attached APK, then open Settings → Import shared collection and select MdP-RemiX.mdpremix. " +
                     "The collection includes playlists, local audio, background and settings. Keep both files. " +
                     "If Android reports a signing conflict, keep your existing app and its data; do not uninstall it."
             } else {
-                "Instalează MdP-RemiX.apk, apoi deschide Setări → Importă colecția primită și alege MdP-RemiX.mdpremix. " +
+                "Instalează APK-ul atașat, apoi deschide Setări → Importă colecția primită și alege MdP-RemiX.mdpremix. " +
                     "Colecția include playlisturile, fișierele audio locale, fundalul și setările. Păstrează ambele fișiere. " +
                     "Dacă Android raportează un conflict de semnătură, păstrează aplicația existentă și datele ei; nu o dezinstala."
             })
-            clipData = ClipData.newUri(app.contentResolver, "MdP-RemiX.apk", prepared.apkUri).apply {
+            clipData = ClipData.newUri(app.contentResolver, "MdP RemiX APK", prepared.apkUri).apply {
                 addItem(ClipData.Item(prepared.collectionUri))
             }
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

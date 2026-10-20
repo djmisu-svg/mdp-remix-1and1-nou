@@ -1,6 +1,15 @@
 package ro.mdp.remix.transfer
 
 import android.content.Intent
+import android.content.ComponentName
+import android.app.Activity
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ResultReceiver
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ApplicationInfo
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -12,6 +21,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -129,6 +140,79 @@ class CollectionSharingTest {
             sources.deleteRecursively()
             prepared?.let { File(target.cacheDir, "sharing/${it.id}").deleteRecursively() }
             mediaDirectory.listFiles().orEmpty().filter { it.name !in originalNames }.forEach { it.deleteRecursively() }
+        }
+    }
+
+    @Test fun sharesOneInstallableApkAsDocumentWithTemporaryReadPermission() = runBlocking {
+        assertTrue(target.packageName.endsWith(".premiumtest"))
+        val sharing = CollectionSharing(target)
+        val prepared = sharing.prepareApk(english = true)
+        try {
+            val intent = sharing.apkShareIntent(prepared)
+            assertEquals(Intent.ACTION_SEND, intent.action)
+            assertEquals("application/vnd.android.package-archive", intent.type)
+            @Suppress("DEPRECATION")
+            val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            assertEquals(prepared.apkUri, uri)
+            assertEquals("content", uri?.scheme)
+            assertEquals("${target.packageName}.mdpfiles", uri?.authority)
+            assertEquals(1, intent.clipData?.itemCount)
+            assertEquals(uri, intent.clipData?.getItemAt(0)?.uri)
+            assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+            assertEquals(0, intent.flags and (Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION))
+            assertFalse(intent.hasExtra(Intent.EXTRA_TEXT))
+            assertTrue("Test package must not be presented as the production release", intent.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty().contains("Test"))
+            val installed = File(target.applicationInfo.sourceDir)
+            assertEquals(installed.inputStream().use(::sha256), target.contentResolver.openInputStream(prepared.apkUri)!!.use(::sha256))
+            target.contentResolver.openAssetFileDescriptor(prepared.apkUri, "r")!!.use { assertEquals(installed.length(), it.length) }
+            val chooser = Intent.createChooser(intent, "Share APK")
+            assertTrue("Android chooser must propagate temporary access", chooser.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+            assertEquals(1, chooser.clipData?.itemCount)
+            val received = CountDownLatch(1)
+            var resultCode = Activity.RESULT_CANCELED
+            var receipt: Bundle? = null
+            val receiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
+                override fun onReceiveResult(code: Int, data: Bundle?) {
+                    resultCode = code
+                    receipt = data
+                    received.countDown()
+                }
+            }
+            val delivery = Intent(intent).apply {
+                component = ComponentName(instrumentation.context.packageName, ApkSharingProbeActivity::class.java.name)
+                putExtra("mdp.test.result", receiver)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            instrumentation.runOnMainSync { target.startActivity(delivery) }
+            assertTrue("The receiving application must read the APK using its temporary grant", received.await(20, TimeUnit.SECONDS))
+            assertEquals(receipt?.getString("error"), Activity.RESULT_OK, resultCode)
+            val delivered = checkNotNull(receipt)
+            assertNotEquals("This must exercise a different app UID", target.applicationInfo.uid, delivered.getInt("uid"))
+            assertEquals(installed.length(), delivered.getLong("bytes"))
+            assertEquals(installed.inputStream().use(::sha256), delivered.getString("sha256"))
+        } finally {
+            File(target.cacheDir, "sharing/${prepared.id}").deleteRecursively()
+        }
+    }
+
+    @Test fun refusesMissingAndSplitApksInsteadOfOfferingAnUninstallableFile() = runBlocking {
+        assertTrue(target.packageName.endsWith(".premiumtest"))
+        fun context(info: ApplicationInfo) = object : ContextWrapper(target) {
+            override fun getApplicationContext(): Context = this
+            override fun getApplicationInfo(): ApplicationInfo = info
+        }
+        val missing = ApplicationInfo(target.applicationInfo).apply {
+            splitSourceDirs = null
+            sourceDir = File(target.cacheDir, "missing-${UUID.randomUUID()}.apk").absolutePath
+        }
+        val split = ApplicationInfo(target.applicationInfo).apply { splitSourceDirs = arrayOf("/fixture/split.apk") }
+        for (info in listOf(missing, split)) {
+            try {
+                CollectionSharing(context(info)).prepareApk(english = true)
+                throw AssertionError("Missing or incomplete APK must never be offered as installable")
+            } catch (failure: IOException) {
+                assertTrue(failure.message.orEmpty().contains("release", ignoreCase = true))
+            }
         }
     }
 

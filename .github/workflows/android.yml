@@ -6,16 +6,28 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Choose isolated test, signed release, or an existing-key audit (no build)'
+        description: 'Choose test, signed verification build, exact-artifact publication, or key audit'
         type: choice
-        options: [premium-test, release, signing-audit]
+        options: [premium-test, release, publish-release, signing-audit]
         default: premium-test
       version_name:
         description: 'Production version (major.minor.patch); blank uses the source default'
         type: string
         default: ''
       publish_release:
-        description: 'Publish the verified production APK publicly'
+        description: 'Legacy option: keep false; use publish-release after testing the signed artifact'
+        type: boolean
+        default: false
+      source_run_id:
+        description: 'Successful signed verification run containing the exact APK tested on devices'
+        type: string
+        default: ''
+      private_backup_confirmed:
+        description: 'Signing key/password and personal data have verified private backups'
+        type: boolean
+        default: false
+      physical_sharing_verified:
+        description: 'This exact signed APK passed WhatsApp sharing and installation on another Android device'
         type: boolean
         default: false
 
@@ -42,4 +54,16 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/signing-audit.yml
+    secrets: inherit
+
+  publish_release:
+    if: ${{ inputs.target == 'publish-release' }}
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/publish-verified-release.yml
+    with:
+      source_run_id: ${{ inputs.source_run_id }}
+      private_backup_confirmed: ${{ inputs.private_backup_confirmed }}
+      physical_sharing_verified: ${{ inputs.physical_sharing_verified }}
     secrets: inherit

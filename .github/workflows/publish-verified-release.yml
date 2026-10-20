@@ -1,0 +1,170 @@
+name: Publish Exact Tested Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Successful signed verification run whose exact APK passed the owner device tests'
+        type: string
+        required: true
+      private_backup_confirmed:
+        description: 'Permanent signing key/password and personal data have verified private backups'
+        type: boolean
+        required: true
+        default: false
+      physical_sharing_verified:
+        description: 'This exact APK passed WhatsApp sharing and installation on another Android device'
+        type: boolean
+        required: true
+        default: false
+  workflow_call:
+    inputs:
+      source_run_id:
+        type: string
+        required: true
+      private_backup_confirmed:
+        type: boolean
+        required: false
+        default: false
+      physical_sharing_verified:
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: android-production-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Promote the exact verified and device-tested APK without rebuilding
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: android-production
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Require verified owner backup and physical-device sharing evidence
+        if: ${{ !inputs.private_backup_confirmed || !inputs.physical_sharing_verified }}
+        shell: bash
+        run: |
+          echo '::error::Publication is blocked until the owner confirms the private signing/data backups and WhatsApp/secondary-device test for this exact APK.'
+          exit 1
+
+      - name: Check out the currently selected approved source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Identify the exact successful signed verification artifact
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$GITHUB_REPOSITORY" = 'djmisu-svg/mdp-remix-1and1-nou'
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo '::error::A numeric successful verification run ID is required.'; exit 1; }
+          python3 tools/verify_release_candidate.py inspect "$SOURCE_RUN_ID" "$GITHUB_SHA" "$RUNNER_TEMP/mdp-candidate-source.json"
+
+      - name: Download the exact tested artifact ZIP
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.source.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          gh api "repos/djmisu-svg/mdp-remix-1and1-nou/actions/artifacts/$ARTIFACT_ID/zip" > "$RUNNER_TEMP/mdp-tested-release.zip"
+
+      - name: Set up JDK 17 for signature verification only
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up pinned APK verification tools without Gradle
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Reverify exact bytes, production signature and successful update evidence
+        id: verify
+        shell: bash
+        env:
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          python3 tools/verify_release_candidate.py verify "$RUNNER_TEMP/mdp-tested-release.zip" "$RUNNER_TEMP/mdp-candidate-source.json" dist-release
+
+      - name: Publish the exact tested APK and stable direct-download alias
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MDP_VERSION_NAME: ${{ steps.verify.outputs.version_name }}
+          MDP_VERSION_CODE: ${{ steps.verify.outputs.version_code }}
+          MDP_SOURCE_COMMIT: ${{ steps.verify.outputs.source_commit }}
+          MDP_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          test "$GH_REPO" = 'djmisu-svg/mdp-remix-1and1-nou'
+          (cd dist-release && sha256sum -c SHA256SUMS.txt)
+          python3 tools/verify_release_candidate.py check-latest dist-release/update-manifest.json
+          python3 - <<'PY'
+          import json, os, pathlib, urllib.error, urllib.request
+          repository = 'djmisu-svg/mdp-remix-1and1-nou'
+          name, code = os.environ['MDP_VERSION_NAME'], os.environ['MDP_VERSION_CODE']
+          def exists(path):
+              request = urllib.request.Request('https://api.github.com/repos/' + repository + path,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json',
+                           'User-Agent': 'MdP-Exact-Artifact-Promotion'})
+              try:
+                  with urllib.request.urlopen(request, timeout=30):
+                      return True
+              except urllib.error.HTTPError as failure:
+                  if failure.code == 404:
+                      return False
+                  raise SystemExit('Release/tag lookup failed; nothing was published.')
+          tag = 'v' + name
+          if exists('/releases/tags/' + tag) or exists('/git/ref/tags/' + tag):
+              raise SystemExit('The release or tag already exists. Published APKs are never overwritten.')
+          notes = (f'MdP RemiX 1&1 Premium v{name}\n\n'
+              f'Package: ro.mdp.remix. Version: {name} ({code}).\n\n'
+              'Download MdP-RemiX-Premium.apk or the versioned APK and open it on Android 6.0 or newer. '
+              'Allow installation from your browser/file manager when Android asks.\n\n'
+              'This APK is the exact artifact from the signed verification run, without rebuilding or re-signing. '
+              'Its permanent certificate, package/version, non-debuggable manifest, checksums and ZIP alignment were verified again before publication. '
+              'Fresh installation and a same-key higher-versionCode update preserving seeded app data passed on Android 35. '
+              'The owner separately confirmed private backups and WhatsApp/secondary-device tests for these exact bytes.\n\n'
+              f'Verification run: https://github.com/{repository}/actions/runs/{os.environ["MDP_SOURCE_RUN_ID"]}\n'
+              f'Approved source: {os.environ["MDP_SOURCE_COMMIT"]}\n\n'
+              f'Stable direct APK: https://github.com/{repository}/releases/latest/download/MdP-RemiX-Premium.apk\n\n'
+              'Future updates require the same ro.mdp.remix package and permanent signing certificate. '
+              'A legacy Debug-signed installation with another certificate cannot receive this APK as an in-place update; '
+              'keep the original installed until its personal data backup and restoration have been verified. '
+              'The application and workflow do not uninstall or clear it automatically.\n\n'
+              'update-manifest.json records the verified APK SHA-256, byte size, versionCode and public signing-certificate fingerprint.\n')
+          pathlib.Path('release-notes.txt').write_text(notes)
+          PY
+          tag="v$MDP_VERSION_NAME"
+          gh release create "$tag" --target "$MDP_SOURCE_COMMIT" --title "MdP RemiX 1&1 Premium v$MDP_VERSION_NAME" --notes-file release-notes.txt --draft
+          gh release upload "$tag" "dist-release/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk" dist-release/MdP-RemiX-Premium.apk dist-release/SHA256SUMS.txt dist-release/update-manifest.json dist-release/production-install-verification.txt
+          gh release edit "$tag" --draft=false --latest
+          echo "Public direct APK: https://github.com/$GH_REPO/releases/latest/download/MdP-RemiX-Premium.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "Versioned direct APK: https://github.com/$GH_REPO/releases/download/$tag/MdP-RemiX-Premium-$MDP_VERSION_NAME.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "Exact source verification run: $MDP_SOURCE_RUN_ID. No APK rebuild or re-signing occurred during publication." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary artifact download
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- "$RUNNER_TEMP/mdp-tested-release.zip" "$RUNNER_TEMP/mdp-candidate-source.json"

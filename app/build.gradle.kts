@@ -74,6 +74,12 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
     testBuildType = "premiumTest"
+    providers.gradleProperty("mdpInstrumentedBuildType").orNull?.let { selectedType ->
+        require(selectedType in setOf("premiumTest", "release")) {
+            "mdpInstrumentedBuildType must be premiumTest or release."
+        }
+        testBuildType = selectedType
+    }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
     lint { abortOnError = true }
 }
@@ -81,7 +87,8 @@ android {
 gradle.taskGraph.whenReady {
     val packagesRelease = allTasks.any {
         it.project == project && it.name in setOf(
-            "assembleRelease", "bundleRelease", "packageRelease", "installRelease"
+            "assembleRelease", "bundleRelease", "packageRelease", "installRelease",
+            "assembleReleaseAndroidTest", "packageReleaseAndroidTest"
         )
     }
     if (packagesRelease) {
