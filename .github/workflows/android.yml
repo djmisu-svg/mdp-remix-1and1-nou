@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: 'Choose the isolated test APK or a signed production release'
+        description: 'Choose isolated test, signed release, or an existing-key audit (no build)'
         type: choice
-        options: [premium-test, release]
+        options: [premium-test, release, signing-audit]
         default: premium-test
       version_name:
         description: 'Production version (major.minor.patch); blank uses the source default'
@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   build:
-    if: ${{ inputs.target != 'release' }}
+    if: ${{ inputs.target == 'premium-test' }}
     uses: ./.github/workflows/build.yml
 
   release:
@@ -35,4 +35,11 @@ jobs:
     with:
       version_name: ${{ inputs.version_name }}
       publish_release: ${{ inputs.publish_release }}
+    secrets: inherit
+
+  signing_audit:
+    if: ${{ inputs.target == 'signing-audit' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/signing-audit.yml
     secrets: inherit

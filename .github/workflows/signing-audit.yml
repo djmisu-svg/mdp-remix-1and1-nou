@@ -1,0 +1,134 @@
+name: Audit Existing Android Signing Identity
+
+# Diagnostic only: no checkout, Gradle, Android SDK, APK, cache or artifact upload.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  signing_audit:
+    name: Check existing protected signing credentials without building
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: android-production
+    permissions:
+      contents: read
+    outputs:
+      status: ${{ steps.audit.outputs.status }}
+      candidate_match: ${{ steps.audit.outputs.candidate_match }}
+      configured_pin_match: ${{ steps.audit.outputs.configured_pin_match }}
+    steps:
+      - name: Set up JDK 17 for existing-key access only
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Audit presence and identity of existing signing secrets
+        id: audit
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          audit_directory=$(mktemp -d "$RUNNER_TEMP/mdp-signing-audit.XXXXXX")
+          trap 'rm -rf -- "$audit_directory"' EXIT HUP INT TERM
+          export MDP_AUDIT_DIRECTORY="$audit_directory"
+          python3 - <<'PY'
+          import base64, binascii, hashlib, os, pathlib, re, ssl, subprocess
+
+          names = ('ANDROID_KEYSTORE_BASE64', 'ANDROID_KEYSTORE_PASSWORD',
+                   'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD', 'ANDROID_SIGNING_CERT_SHA256')
+          candidates = {
+              'BUILD_47': '180d081e641da4b5ad4bd210288e4cf07bd541c5a2335e7b18c8963dce5b1b7b',
+              'BUILD_48': '38caa50905fbb7af1d921a5ac19d8974e0a5c2371b5b75c70cbdb5089adf49b6',
+          }
+          directory = pathlib.Path(os.environ['MDP_AUDIT_DIRECTORY'])
+          summary = ['### Existing signing identity audit',
+                     'Diagnostic only. No key was generated and no application was built or published.', '']
+
+          def record(message):
+              print(message)
+              summary.append(message + '  ')
+
+          def finish(status, candidate='NOT_CHECKED', pin='NOT_CHECKED'):
+              record('AUDIT_STATUS=' + status)
+              record('CANDIDATE_MATCH=' + candidate)
+              record('CONFIGURED_PIN_MATCH=' + pin)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                  output.write('status=' + status + '\ncandidate_match=' + candidate + '\nconfigured_pin_match=' + pin + '\n')
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+                  output.write('\n'.join(summary) + '\n')
+
+          def audit():
+              missing = []
+              for name in names:
+                  present = bool(os.environ.get(name, '').strip())
+                  record(name + ': ' + ('PRESENT' if present else 'MISSING'))
+                  if not present:
+                      missing.append(name)
+              if missing:
+                  record('Missing secret names: ' + ', '.join(missing))
+                  finish('INCOMPLETE')
+                  return
+              pin = re.sub(r'[:\s]', '', os.environ['ANDROID_SIGNING_CERT_SHA256']).lower()
+              if not re.fullmatch(r'[0-9a-f]{64}', pin):
+                  finish('INVALID_CERTIFICATE_PIN')
+                  return
+              try:
+                  decoded = base64.b64decode(''.join(os.environ['ANDROID_KEYSTORE_BASE64'].split()), validate=True)
+                  if not decoded:
+                      raise ValueError('empty keystore')
+              except (ValueError, binascii.Error):
+                  finish('INVALID_KEYSTORE_ENCODING')
+                  return
+              keystore = directory / 'existing.keystore'
+              keystore.write_bytes(decoded)
+              keystore.chmod(0o600)
+              certificate = directory / 'public-certificate.pem'
+              # Alias is read from the secret environment; never print command arguments.
+              # Passwords are read by keytool directly from environment variables.
+              with certificate.open('wb') as output, (directory / 'keytool-private.log').open('wb') as errors:
+                  exported = subprocess.run(['keytool', '-exportcert', '-rfc', '-keystore', str(keystore),
+                      '-storepass:env', 'ANDROID_KEYSTORE_PASSWORD', '-alias', os.environ['ANDROID_KEY_ALIAS']],
+                      stdout=output, stderr=errors, timeout=45, check=False)
+              if exported.returncode:
+                  finish('KEYSTORE_ACCESS_FAILED')
+                  return
+              try:
+                  actual = hashlib.sha256(ssl.PEM_cert_to_DER_cert(certificate.read_text())).hexdigest()
+              except (ValueError, OSError):
+                  finish('CERTIFICATE_READ_FAILED')
+                  return
+              candidate = next((name for name, digest in candidates.items() if digest == actual), 'NONE')
+              matches_pin = 'YES' if actual == pin else 'NO'
+              # A CSR verifies access to the EXISTING private key; it never generates a key.
+              with (directory / 'key-access-private.log').open('wb') as output:
+                  accessed = subprocess.run(['keytool', '-certreq', '-keystore', str(keystore),
+                      '-storepass:env', 'ANDROID_KEYSTORE_PASSWORD', '-keypass:env', 'ANDROID_KEY_PASSWORD',
+                      '-alias', os.environ['ANDROID_KEY_ALIAS'], '-file', str(directory / 'private-key-access.csr')],
+                      stdout=output, stderr=subprocess.STDOUT, timeout=45, check=False)
+              if accessed.returncode:
+                  finish('PRIVATE_KEY_ACCESS_FAILED', candidate, matches_pin)
+              elif matches_pin != 'YES':
+                  finish('CERTIFICATE_PIN_MISMATCH', candidate, matches_pin)
+              elif candidate == 'NONE':
+                  finish('NO_KNOWN_V3_KEY_MATCH', candidate, matches_pin)
+              else:
+                  # Identity is matched by SHA-256 only, including an ORIGINAL Debug certificate.
+                  finish('MATCHES_KNOWN_V3_KEY', candidate, matches_pin)
+
+          try:
+              audit()
+          except (OSError, subprocess.SubprocessError):
+              # Never expose private keytool diagnostics, aliases, passwords or tracebacks.
+              finish('AUDIT_ERROR')
+          PY

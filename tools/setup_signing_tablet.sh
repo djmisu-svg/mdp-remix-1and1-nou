@@ -10,15 +10,45 @@ environment='android-production'
 key_directory="$HOME/.local/share/mdp-remix-signing"
 keystore="$key_directory/mdp-remix-release.p12"
 alias_name='mdp-remix-release'
+backup_directory="$HOME/storage/downloads/MDP-release-signing-backup"
+known_backup="$backup_directory/mdp-remix-release.p12"
 existing=false
 if [[ $# -gt 0 ]]; then
+    if [[ $# -eq 1 && "$1" == '--status' ]]; then
+        # Metadata only: no network, keytool, password prompt or filesystem writes.
+        report_file() {
+            if [[ -f "$2" ]]; then
+                printf '%s=PRESENT\n' "$1"
+            elif [[ -e "$2" || -L "$2" ]]; then
+                printf '%s=NOT_A_REGULAR_FILE\n' "$1"
+            else
+                printf '%s=ABSENT\n' "$1"
+            fi
+        }
+        report_file LOCAL_KEYSTORE "$keystore"
+        report_file ENCRYPTED_DOWNLOADS_BACKUP "$known_backup"
+        report_file PENDING_UPLOAD_MARKER "$key_directory/upload-pending.sha256"
+        report_file CONFIGURED_CERTIFICATE_MARKER "$key_directory/configured-certificate.sha256"
+        printf '%s\n' 'GITHUB_SECRETS=NOT_CHECKED' 'SIGNING_COMPATIBILITY=NOT_VERIFIED'
+        exit 0
+    fi
     if [[ $# -ne 2 || "$1" != '--existing' ]]; then
-        echo 'Usage: bash setup_signing_tablet.sh [--existing /path/to/original-keystore]'
+        echo 'Usage: bash setup_signing_tablet.sh [--status | --existing /path/to/original-keystore]'
         exit 1
     fi
     existing=true
     keystore="$2"
     [[ -f "$keystore" ]] || { echo 'The existing keystore file was not found.'; exit 1; }
+fi
+if [[ "$existing" == false && ! -f "$keystore" ]] &&
+    [[ -e "$key_directory/upload-pending.sha256" || -e "$key_directory/configured-certificate.sha256" ||
+       -e "$known_backup" || -L "$known_backup" || -e "$keystore" || -L "$keystore" ]]; then
+    echo 'Stopped before key generation: an earlier signing setup or encrypted backup exists, but the local keystore is unavailable.'
+    echo 'Recover and reuse that same keystore with --existing. Do not type NEW or remove signing markers to generate a replacement.'
+    if [[ -f "$known_backup" ]]; then
+        printf 'Reuse the encrypted backup: bash %q --existing %q\n' "$0" "$known_backup"
+    fi
+    exit 1
 fi
 for executable in keytool gh base64 sha256sum; do
     command -v "$executable" >/dev/null || { echo "Install the required Termux packages first; missing: $executable"; exit 1; }
@@ -37,13 +67,20 @@ chmod 700 "$key_directory"
 
 gh auth status --hostname github.com >/dev/null 2>&1 || gh auth login --hostname github.com --web --git-protocol https
 gh repo view "$repo" --json nameWithOwner >/dev/null
-if ! gh api "repos/$repo/environments/$environment" >/dev/null 2>&1; then
+if gh api --include "repos/$repo/environments/$environment" \
+    > "$temporary/environment-response" 2> "$temporary/environment-errors"; then
+    : # Preserve the existing environment and all of its protection rules.
+elif grep -Eq '^HTTP/[0-9.]+[[:space:]]+404([[:space:]]|$)' "$temporary/environment-response"; then
     printf '%s' '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' |
         gh api --method PUT "repos/$repo/environments/$environment" --input - >/dev/null
     for allowed_branch in "$branch" main; do
         gh api --method POST "repos/$repo/environments/$environment/deployment-branch-policies" \
             -f name="$allowed_branch" -f type=branch >/dev/null
     done
+else
+    echo 'Stopped: GitHub environment access could not be verified. Existing environment protections were not changed.'
+    echo 'Check connectivity and repository-owner permissions, then rerun the same command.'
+    exit 1
 fi
 
 # Only names are queried. GitHub never returns secret values.
@@ -52,7 +89,8 @@ gh secret list --repo "$repo" --json name --jq '.[].name' >> "$temporary/secret-
 if grep -Eq '^ANDROID_(KEYSTORE_BASE64|KEYSTORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD|SIGNING_CERT_SHA256)$' "$temporary/secret-names"; then
     if [[ ! -f "$key_directory/upload-pending.sha256" ]]; then
         echo 'Signing secrets already exist in the repository or android-production. They have been preserved.'
-        echo 'Do not create a replacement key. Run the signed release workflow once to validate the existing setup.'
+        echo 'Do not create a replacement key. Run the signing-audit workflow first; do not build or publish until identity and credentials are verified.'
+        printf 'gh workflow run android.yml --repo %s --ref %s -f target=signing-audit\n' "$repo" "$branch"
         exit 0
     fi
 fi
@@ -98,13 +136,13 @@ if grep -Eiq 'Android[[:space:]]+Debug' "$temporary/public-certificate.txt"; the
 fi
 certificate_sha=$(sha256sum "$temporary/certificate.der")
 certificate_sha=${certificate_sha%% *}
-if [[ -f "$key_directory/upload-pending.sha256" ]] &&
-    [[ "$(cat "$key_directory/upload-pending.sha256")" != "$certificate_sha" ]]; then
-    echo 'The pending setup belongs to another signing key. Nothing was overwritten.'
-    exit 1
-fi
+for certificate_marker in "$key_directory/upload-pending.sha256" "$key_directory/configured-certificate.sha256"; do
+    if [[ -f "$certificate_marker" ]] && [[ "$(cat "$certificate_marker")" != "$certificate_sha" ]]; then
+        echo 'The saved signing setup belongs to another certificate. Nothing was overwritten.'
+        exit 1
+    fi
+done
 
-backup_directory="$HOME/storage/downloads/MDP-release-signing-backup"
 [[ -d "$HOME/storage/downloads" ]] || {
     echo 'Run termux-setup-storage, allow access, then run this script again. The encrypted key is preserved.'
     exit 1
@@ -133,5 +171,5 @@ printf '%s' "$MDP_SETUP_KEY_PASSWORD" | gh secret set ANDROID_KEY_PASSWORD --rep
 printf '%s' "$certificate_sha" | gh secret set ANDROID_SIGNING_CERT_SHA256 --repo "$repo" --env "$environment"
 mv "$key_directory/upload-pending.sha256" "$key_directory/configured-certificate.sha256"
 echo 'Signing secrets configured. No build or publication was started.'
-echo 'To run one signed APK build without public publication:'
-printf 'gh workflow run android.yml --repo %s --ref %s -f target=release -f publish_release=false\n' "$repo" "$branch"
+echo 'Next, audit credentials without building, then compare the certificate with the installed APK before any compatible-update claim:'
+printf 'gh workflow run android.yml --repo %s --ref %s -f target=signing-audit\n' "$repo" "$branch"
