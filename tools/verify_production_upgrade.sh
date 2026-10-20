@@ -38,12 +38,25 @@ def identity(apk, expected_package, release_app):
     if len(certificates) != 1 or certificates[0].lower() != pin:
         raise RuntimeError('Every production/test/upgrade APK must use the actual pinned permanent certificate.')
     badging = text(sdk / 'aapt', 'dump', 'badging', apk)
-    found = re.search(r"^package: name='([^']+)' versionCode='(\d+)'", badging, re.M)
-    if not found or found.group(1) != expected_package:
-        raise RuntimeError('An APK has an unexpected applicationId.')
+    package_line = next((line for line in badging.splitlines() if line.startswith('package: ')), '')
+    found = re.search(r"\bname='([^']+)'", package_line)
+    actual_package = found.group(1) if found else '<missing>'
+    version = re.search(r"\bversionCode='([^']*)'", package_line)
+    actual_code = version.group(1) if version else ''
+    # AGP instrumentation APKs may omit versionCode; their package and signer
+    # must still match. Only the two production APKs participate in an update.
+    print(f'aapt dump badging [{apk.name}]: {package_line[:1000]}', flush=True)
+    print(f'APK identity: {apk.name}; applicationId={actual_package}; '
+          f'expected={expected_package}; versionCode={actual_code or "<absent>"}', flush=True)
+    if actual_package != expected_package:
+        raise RuntimeError(f'{apk.name} has applicationId {actual_package}; expected {expected_package}.')
     if release_app and 'application-debuggable' in badging:
         raise RuntimeError('The actual production APK must be non-debuggable.')
-    return int(found.group(2))
+    if release_app:
+        if not re.fullmatch(r'[0-9]+', actual_code) or not 1 <= int(actual_code) <= 2_100_000_000:
+            raise RuntimeError(f'{apk.name} has an invalid production versionCode.')
+        return int(actual_code)
+    return None
 
 if text('adb', 'shell', 'getprop', 'ro.kernel.qemu') != '1':
     raise SystemExit('Production installation verification is restricted to a disposable emulator.')
